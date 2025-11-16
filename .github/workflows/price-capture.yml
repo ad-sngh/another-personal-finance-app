@@ -1,0 +1,72 @@
+name: Portfolio Price Capture
+
+on:
+  schedule:
+    # Run at 5 minutes past every hour, Monday-Friday, 9AM-5PM EST
+    - cron: '5 14-22 * * 1-5'  # UTC time (EST + 5 hours for standard time)
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      test_mode:
+        description: 'Run in test mode'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  capture-prices:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+        
+    - name: Initialize database
+      run: |
+        cd backend
+        python -c "from database import init_db; init_db()"
+        
+    - name: Capture portfolio prices
+      env:
+        TEST_MODE: ${{ github.event.inputs.test_mode || 'false' }}
+      run: |
+        cd backend
+        python ../scripts/capture_prices.py
+      
+    - name: Commit price history changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        cd backend
+        if [ -n "$(git status --porcelain portfolio.db)" ]; then
+          git add portfolio.db
+          git commit -m "Update price history - $(date)"
+          git push
+        else
+          echo "No database changes to commit"
+        fi
+        
+    - name: Upload database artifact
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: portfolio-database
+        path: backend/portfolio.db
+        retention-days: 30
