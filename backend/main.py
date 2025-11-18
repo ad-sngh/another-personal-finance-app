@@ -6,8 +6,24 @@ from pydantic import BaseModel
 import sqlite3
 import yfinance as yf
 import argparse
-from typing import Optional, List
-from database import get_db, init_db, get_all_holdings, get_holding_by_id, create_holding, update_holding, delete_holding, get_holding_history, add_price_history, get_price_history, get_portfolio_history
+from typing import Optional, List, Literal
+from database import (
+    get_db,
+    init_db,
+    get_all_holdings,
+    get_holding_by_id,
+    create_holding,
+    update_holding,
+    delete_holding,
+    get_holding_history,
+    add_price_history,
+    add_price_history_hourly,
+    get_price_history,
+    get_portfolio_history,
+    get_account_type_history,
+    get_portfolio_history_hourly,
+    get_account_type_history_hourly,
+)
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
@@ -42,7 +58,10 @@ class HoldingCreate(BaseModel):
     shares: float
     cost: float
     current_price: float
-    contribution: Optional[float] = None  # Will be calculated on backend
+    contribution: Optional[float] = None  # Allow manual overrides
+    track_price: bool = True
+    manual_price_override: bool = False
+    value_override: Optional[float] = None
 
 class HoldingUpdate(BaseModel):
     account_type: str
@@ -54,7 +73,10 @@ class HoldingUpdate(BaseModel):
     shares: float
     cost: float
     current_price: float
-    contribution: Optional[float] = None  # Will be calculated on backend
+    contribution: Optional[float] = None  # Allow manual overrides
+    track_price: bool = True
+    manual_price_override: bool = False
+    value_override: Optional[float] = None
 
 class PriceRequest(BaseModel):
     ticker: str
@@ -88,12 +110,14 @@ def capture_portfolio_prices():
         captured_count = 0
         
         for holding in holdings:
-            if holding['ticker'] and holding['ticker'].strip():
-                price, name = fetch_price(holding['ticker'])
+            if holding['lookup'] and holding['lookup'].strip():
+                price, name = fetch_price(holding['lookup'])
                 if price is not None:
-                    add_price_history(holding['ticker'], price)
+                    captured_at = datetime.utcnow()
+                    add_price_history(holding['lookup'], price, captured_at=captured_at)
+                    add_price_history_hourly(holding['lookup'], price, timestamp=captured_at)
                     captured_count += 1
-                    print(f"Captured {holding['ticker']}: ${price}")
+                    print(f"Captured {holding['lookup']}: ${price}")
                 else:
                     print(f"Failed to fetch price for {holding['ticker']}")
         
@@ -172,21 +196,30 @@ def calculate_portfolio_stats(holdings: List[dict]) -> dict:
         'holdings_count': len(holdings)
     }
 
+def _is_cash_holding(holding: dict) -> bool:
+    category = holding.get('category', '') or ''
+    ticker = holding.get('ticker', '') or ''
+    lookup = holding.get('lookup', '') or ''
+    return category.strip().lower() == 'cash' or (not ticker and not lookup)
+
+
 def enrich_holdings_with_calculations(holdings: List[dict]) -> tuple[List[dict], dict]:
     """Add calculated fields to holdings"""
-    portfolio_stats = calculate_portfolio_stats(holdings)
-    total_value = portfolio_stats['total_value']
-    
     enriched_holdings = []
+
     for holding in holdings:
         shares = holding['shares']
-        current_price = holding['current_price']
+
+        latest_price = holding.get('latest_price')
+        manual_override = bool(holding.get('manual_price_override'))
+        use_price_history = (not manual_override) and (not _is_cash_holding(holding)) and latest_price is not None
+        current_price = latest_price if use_price_history else holding['current_price']
         cost_per_share = holding['cost']
         contribution = holding['contribution']
         
         # Calculated fields
-        value = shares * current_price
-        portfolio_percentage = (value / total_value * 100) if total_value > 0 else 0
+        value_override = holding.get('value_override')
+        value = value_override if value_override is not None else shares * current_price
         absolute_gain = value - contribution  # Current value - total contribution
         relative_gain = (absolute_gain / contribution * 100) if contribution > 0 else 0
         
@@ -196,15 +229,24 @@ def enrich_holdings_with_calculations(holdings: List[dict]) -> tuple[List[dict],
         
         enriched_holding = dict(holding)
         enriched_holding.update({
+            'current_price': current_price,
             'value': value,
-            'portfolio_percentage': portfolio_percentage,
             'absolute_gain': absolute_gain,
             'relative_gain': relative_gain,
             'percent_change': percent_change,
-            'dollar_change': dollar_change
+            'dollar_change': dollar_change,
+            'price_source': 'price_history' if use_price_history else 'holdings_table'
         })
         
         enriched_holdings.append(enriched_holding)
+    
+    portfolio_stats = calculate_portfolio_stats(enriched_holdings)
+    total_value = portfolio_stats['total_value']
+
+    # Update portfolio percentage now that totals are based on refreshed prices
+    for holding in enriched_holdings:
+        value = holding['value']
+        holding['portfolio_percentage'] = (value / total_value * 100) if total_value > 0 else 0
     
     return enriched_holdings, portfolio_stats
 
@@ -310,12 +352,25 @@ async def api_get_price_history(ticker: str, days: int = 30):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/portfolio-history")
-async def api_get_portfolio_history(days: int = 30):
+async def api_get_portfolio_history(
+    days: int = 30,
+    hours: int = 168,
+    granularity: Literal['day', 'hour'] = 'day'
+):
     """Get portfolio value history"""
     try:
-        history = get_portfolio_history(days)
-        history_dicts = [dict(row) for row in history]
-        return {"history": history_dicts}
+        if granularity == 'hour':
+            history = get_portfolio_history_hourly(hours)
+            account_history = get_account_type_history_hourly(hours)
+        else:
+            history = get_portfolio_history(days)
+            account_history = get_account_type_history(days)
+        return {
+            "history": history,
+            "account_type_history": account_history,
+            "granularity": granularity,
+            "window": hours if granularity == 'hour' else days,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
