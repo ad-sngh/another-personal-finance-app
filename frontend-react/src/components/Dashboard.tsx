@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
-import { TrendingUp, DollarSign, PieChart, Activity, X, AlertTriangle, Menu, LayoutDashboard, BarChart3 } from 'lucide-react';
-import { holdingsAPI, Holding, HoldingPayload } from '../api/client';
+import { TrendingUp, X, AlertTriangle, Menu, LayoutDashboard, BarChart3 } from 'lucide-react';
+import { holdingsAPI, Holding, HoldingPayload, MarketIndexSummary, PortfolioMovementSnapshot } from '../api/client';
 import HoldingsTable from './HoldingsTable';
 import StatsCard from './StatsCard';
 import VisualizationsPanel from './VisualizationsPanel';
-import { formatCurrency, formatPercentage } from '../utils/format';
+import { formatCurrency, formatPercentage, formatSignedPercentage } from '../utils/format';
 
 const ACCOUNT_TYPE_PRESETS = ['Taxable', 'TFSA', 'RRSP', 'RESP', 'Cash', 'Brokerage'];
 const CATEGORY_PRESETS = ['Stocks', 'ETF', 'Cash', 'Crypto', 'Bond', 'Mutual Fund'];
+const ALLOCATION_COLORS = ['bg-amber-400', 'bg-blue-500', 'bg-indigo-400', 'bg-emerald-400', 'bg-slate-400'];
 
 export default function Dashboard() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
@@ -48,9 +49,93 @@ export default function Dashboard() {
   const [cadConversionRate, setCadConversionRate] = useState<number | null>(null);
   const isValueOverrideActive = Boolean(formData.manual_price_override || formData.value_override !== undefined);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [marketIndexes, setMarketIndexes] = useState<MarketIndexSummary[]>([]);
+  const [portfolioMovement, setPortfolioMovement] = useState<PortfolioMovementSnapshot | null>(null);
+  const [movementRange, setMovementRange] = useState<'7d' | '1m' | '3m' | 'ytd' | 'all'>('1m');
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketError, setMarketError] = useState<string | null>(null);
+  const accountFilterOptions = useMemo(() => ['All', ...Array.from(new Set(holdings.map(h => h.account_type).filter(Boolean)))], [holdings]);
+  const categoryFilterOptions = useMemo(() => ['All', ...Array.from(new Set(holdings.map(h => h.category).filter(Boolean)))], [holdings]);
+  const filteredHoldings = useMemo(() => {
+    return holdings.filter((holding) => {
+      const accountMatch = accountFilter === 'All' || holding.account_type === accountFilter;
+      const categoryMatch = categoryFilter === 'All' || holding.category === categoryFilter;
+      return accountMatch && categoryMatch;
+    });
+  }, [holdings, accountFilter, categoryFilter]);
+
+  const portfolioSparkline = useMemo(() => {
+    if (!filteredHoldings.length) {
+      return [0, 1, 0.5, 1.2, 0.8, 1.4, 1];
+    }
+    const sorted = [...filteredHoldings].sort((a, b) => a.value - b.value);
+    const chunkSize = Math.max(1, Math.floor(sorted.length / 7));
+    const samples: number[] = [];
+    for (let i = 0; i < sorted.length; i += chunkSize) {
+      const slice = sorted.slice(i, i + chunkSize);
+      const avg = slice.reduce((sum, item) => sum + item.value, 0) / slice.length;
+      samples.push(avg || 0);
+      if (samples.length === 7) break;
+    }
+    while (samples.length < 7) {
+      samples.push(samples[samples.length - 1] ?? 0);
+    }
+    return samples;
+  }, [filteredHoldings]);
+
+  const movementSparkline = useMemo(() => {
+    const values = portfolioSparkline;
+    const width = 200;
+    const height = 55;
+    const padding = 6;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const points = values.map((value, index) => {
+      const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * (width - padding * 2) + padding;
+      const y = height - ((value - min) / range) * (height - padding * 2) - padding;
+      return { x, y };
+    });
+    const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`).join(' ');
+    const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+    return { width, height, linePath, areaPath };
+  }, [portfolioSparkline]);
+
+  const topAccountSnapshot = useMemo(() => {
+    if (!holdings.length) return null as { label: string; value: number } | null;
+    const totals = new Map<string, number>();
+    holdings.forEach((holding) => {
+      totals.set(holding.account_type, (totals.get(holding.account_type) ?? 0) + holding.value);
+    });
+    const [label, value] = Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0];
+    return { label, value };
+  }, [holdings]);
+
+  const allocationBreakdown = useMemo(() => {
+    if (!filteredHoldings.length) return [] as { label: string; value: number; percent: number; color: string }[];
+    const totals = new Map<string, number>();
+    filteredHoldings.forEach((holding) => {
+      const key = holding.category || 'Other';
+      totals.set(key, (totals.get(key) ?? 0) + holding.value);
+    });
+    const totalValue = Array.from(totals.values()).reduce((sum, value) => sum + value, 0) || 1;
+    const ordered = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
+    const slices = ordered.slice(0, 4);
+    const remainder = ordered.slice(4).reduce((sum, [, value]) => sum + value, 0);
+    if (remainder > 0) {
+      slices.push(['Other', remainder]);
+    }
+    return slices.map(([label, value], index) => ({
+      label,
+      value,
+      percent: (value / totalValue) * 100,
+      color: ALLOCATION_COLORS[index % ALLOCATION_COLORS.length],
+    }));
+  }, [holdings]);
 
   useEffect(() => {
     loadHoldings();
+    loadMarketContext();
   }, []);
 
   const defaultPayload = useMemo<HoldingPayload>(() => ({
@@ -156,20 +241,32 @@ export default function Dashboard() {
     }
   };
 
-  useEffect(() => {
-    const filtered = holdings.filter((holding) => {
-      const accountMatch = accountFilter === 'All' || holding.account_type === accountFilter;
-      const categoryMatch = categoryFilter === 'All' || holding.category === categoryFilter;
-      return accountMatch && categoryMatch;
-    });
+  const loadMarketContext = async () => {
+    setMarketLoading(true);
+    setMarketError(null);
+    try {
+      const [indexesResponse, movementResponse] = await Promise.all([
+        holdingsAPI.getMarketSummary(),
+        holdingsAPI.getPortfolioMovement(),
+      ]);
+      setMarketIndexes(indexesResponse.data.indexes);
+      setPortfolioMovement(movementResponse.data);
+    } catch (error) {
+      console.error('Error loading market context:', error);
+      setMarketError('Unable to load market data right now.');
+    } finally {
+      setMarketLoading(false);
+    }
+  };
 
-    const totalValue = filtered.reduce((sum, h) => sum + h.value, 0);
-    const totalContribution = filtered.reduce((sum, h) => sum + h.contribution, 0);
+  useEffect(() => {
+    const totalValue = filteredHoldings.reduce((sum, h) => sum + h.value, 0);
+    const totalContribution = filteredHoldings.reduce((sum, h) => sum + h.contribution, 0);
     const totalGain = totalValue - totalContribution;
     const gainPercentage = totalContribution > 0 ? (totalGain / totalContribution) * 100 : 0;
 
     setStats({ totalValue, totalContribution, totalGain, gainPercentage });
-  }, [holdings, accountFilter, categoryFilter]);
+  }, [filteredHoldings]);
 
   const openAddModal = () => {
     setModalMode('add');
@@ -408,16 +505,20 @@ export default function Dashboard() {
                     Portfolio Tracker
                   </h1>
                 </div>
-                <div className="flex items-center space-x-3">
+                <div className="hidden items-center gap-3 md:flex">
                   <button
                     type="button"
-                    className="btn-secondary"
+                    className="inline-flex items-center rounded-xl border border-soft-primary px-4 py-2 text-sm font-semibold text-soft-primary hover:bg-soft-primary hover:text-white transition"
                     onClick={handleSyncPrices}
                     disabled={isSyncingPrices}
                   >
                     {isSyncingPrices ? 'Syncing…' : 'Sync Prices'}
                   </button>
-                  <button className="btn-primary" onClick={openAddModal}>
+                  <button
+                    type="button"
+                    className="inline-flex items-center rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-soft"
+                    onClick={openAddModal}
+                  >
                     Add Holding
                   </button>
                 </div>
@@ -447,46 +548,203 @@ export default function Dashboard() {
             )}
             {activeTab === 'overview' ? (
               <>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                   <StatsCard
-                    title="Total Value"
+                    title="Portfolio Value"
                     value={formatCurrency(stats.totalValue)}
-                    icon={<DollarSign className="w-6 h-6" />}
-                    trend={stats.gainPercentage}
-                    color="blue"
-                  />
-                  <StatsCard
-                    title="Total Contribution"
-                    value={formatCurrency(stats.totalContribution)}
-                    icon={<PieChart className="w-6 h-6" />}
-                    color="indigo"
+                    subtitle={portfolioMovement?.since ? `Last updated ${new Date(portfolioMovement.since).toLocaleString()}` : '90d'}
+                    deltaLabel={
+                      portfolioMovement?.change !== null && portfolioMovement?.change !== undefined
+                        ? `${(portfolioMovement.change ?? 0) >= 0 ? '+' : '-'}${formatCurrency(Math.abs(portfolioMovement.change ?? 0))}` +
+                          (portfolioMovement.change_percent !== null && portfolioMovement.change_percent !== undefined
+                            ? ` · ${formatSignedPercentage(portfolioMovement.change_percent)}`
+                            : '')
+                        : undefined
+                    }
+                    tone={stats.totalGain >= 0 ? 'positive' : 'negative'}
+                    sparkValues={portfolioSparkline}
                   />
                   <StatsCard
                     title="Total Gain/Loss"
                     value={formatCurrency(stats.totalGain)}
-                    icon={<TrendingUp className="w-6 h-6" />}
-                    trend={stats.gainPercentage}
-                    color={stats.totalGain >= 0 ? 'green' : 'red'}
+                    subtitle={stats.totalContribution ? `${formatCurrency(stats.totalContribution)} contributed` : 'vs contribution'}
+                    tone={stats.totalGain >= 0 ? 'positive' : 'negative'}
+                    sparkValues={portfolioSparkline}
+                    action={
+                      <div className="text-right">
+                        <p className="text-[11px] uppercase tracking-wide text-soft-secondary">Return</p>
+                        <p className={`text-xl font-bold ${stats.totalGain >= 0 ? 'text-soft-success' : 'text-soft-danger'}`}>
+                          {formatPercentage(stats.gainPercentage)}
+                        </p>
+                      </div>
+                    }
                   />
-                  <StatsCard
-                    title="Return"
-                    value={formatPercentage(stats.gainPercentage)}
-                    icon={<Activity className="w-6 h-6" />}
-                    trend={stats.gainPercentage}
-                    color={stats.gainPercentage >= 0 ? 'green' : 'red'}
-                  />
+                  <div className="rounded-2xl bg-soft-white p-4 shadow-soft">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-soft-secondary">Market Update</p>
+                    {marketLoading ? (
+                      <p className="mt-4 text-sm text-soft-secondary">Syncing latest index data…</p>
+                    ) : marketError ? (
+                      <p className="mt-4 text-sm text-soft-danger">{marketError}</p>
+                    ) : marketIndexes.length ? (
+                      <div className="mt-3 divide-y divide-soft-light/70 border border-soft-light rounded-2xl overflow-hidden">
+                        {marketIndexes.slice(0, 3).map((index) => {
+                          const positive = (index.change ?? 0) >= 0;
+                          return (
+                            <a
+                              key={index.id}
+                              href={`https://finance.yahoo.com/quote/${encodeURIComponent(index.symbol)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center justify-between gap-4 bg-white/70 px-4 py-3 hover:bg-soft-light/60 transition"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-wide text-soft-secondary">{index.symbol}</p>
+                                <p className="text-base font-semibold text-soft-dark truncate">{index.name}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-lg font-semibold text-soft-dark">
+                                  {index.price !== null ? formatCurrency(index.price) : '—'}
+                                </p>
+                                <p className={`text-sm font-semibold ${positive ? 'text-soft-success' : 'text-soft-danger'}`}>
+                                  {index.change !== null ? `${positive ? '+' : '-'}${formatCurrency(Math.abs(index.change))}` : '—'}
+                                  {index.change_percent !== null && (
+                                    <span className="ml-2 text-xs">{formatSignedPercentage(index.change_percent)}</span>
+                                  )}
+                                </p>
+                              </div>
+                            </a>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-sm text-soft-secondary">No market indexes available.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mb-4 grid gap-3.5 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+                  <div className="rounded-2xl bg-soft-white p-3 shadow-soft">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-soft-secondary font-semibold">Total Contribution</p>
+                        <div className="mt-0.5 text-xl font-bold text-soft-dark">{formatCurrency(stats.totalContribution)}</div>
+                        {stats.totalValue <= 0 && (
+                          <p className="text-[11px] text-soft-secondary mt-0.5">Add holdings to build your baseline</p>
+                        )}
+                      </div>
+                      {topAccountSnapshot && (
+                        <div className="text-right text-[10px] text-soft-secondary">
+                          <p className="uppercase tracking-wide">Top account</p>
+                          <p className="font-semibold text-soft-dark text-xs">{topAccountSnapshot.label}</p>
+                          <p>{formatCurrency(topAccountSnapshot.value)}</p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[11px] uppercase tracking-wide text-soft-secondary font-semibold">Allocation</p>
+                      {allocationBreakdown.length ? (
+                        allocationBreakdown.map((slice) => (
+                          <div key={slice.label} className="space-y-1">
+                            <div className="flex items-center justify-between text-[11px] text-soft-secondary">
+                              <span className="font-semibold text-soft-dark">{slice.label}</span>
+                              <span>{slice.percent.toFixed(1)}%</span>
+                            </div>
+                            <div className="h-1 w-full rounded-full bg-soft-light overflow-hidden">
+                              <div
+                                className={`${slice.color} h-full transition-all`}
+                                style={{ width: `${slice.percent}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-soft-secondary">Add holdings to see your mix.</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-soft-white p-3.5 shadow-soft flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-soft-secondary font-semibold">Portfolio Movement</p>
+                        <p className="text-[11px] text-soft-secondary">
+                          Since {portfolioMovement?.since ? new Date(portfolioMovement.since).toLocaleDateString() : 'last sync'} · Range {movementRange.toUpperCase()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 rounded-full bg-soft-light px-1.5 py-0.5">
+                        {(['7d', '1m', '3m', 'ytd', 'all'] as const).map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => setMovementRange(option)}
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
+                              movementRange === option ? 'bg-soft-primary text-white shadow-soft' : 'text-soft-secondary'
+                            }`}
+                          >
+                            {option.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {marketLoading ? (
+                      <div className="flex h-16 items-center justify-center">
+                        <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-soft-primary"></div>
+                      </div>
+                    ) : portfolioMovement ? (
+                      <>
+                        <div className="flex flex-wrap items-end justify-between gap-3">
+                          <div>
+                            <p className="text-[11px] uppercase tracking-wide text-soft-secondary">Net Change</p>
+                            <p className={`text-2xl font-bold ${
+                              (portfolioMovement.change ?? 0) >= 0 ? 'text-soft-success' : 'text-soft-danger'
+                            }`}>
+                              {portfolioMovement.change !== null
+                                ? `${(portfolioMovement.change ?? 0) >= 0 ? '+' : '-'}${formatCurrency(Math.abs(portfolioMovement.change ?? 0))}`
+                                : '—'}
+                              {portfolioMovement.change_percent !== null && (
+                                <span className="ml-2 text-lg">{formatSignedPercentage(portfolioMovement.change_percent)}</span>
+                              )}
+                            </p>
+                            <p className="text-[11px] text-soft-secondary mt-0.5">
+                              {portfolioMovement.previous_value !== null && portfolioMovement.current_value !== null
+                                ? `${formatCurrency(portfolioMovement.previous_value)} → ${formatCurrency(portfolioMovement.current_value)}`
+                                : 'Awaiting snapshot data'}
+                            </p>
+                          </div>
+                          <div className="rounded-2xl bg-soft-light px-4 py-2 text-right">
+                            <p className="text-xs uppercase tracking-wide text-soft-secondary">Current Value</p>
+                            <p className="text-2xl font-bold text-soft-dark">{formatCurrency(portfolioMovement.current_value ?? stats.totalValue)}</p>
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-blue-50/60 p-1">
+                          <svg viewBox={`0 0 ${movementSparkline.width} ${movementSparkline.height}`} className="w-full" preserveAspectRatio="none">
+                            <defs>
+                              <linearGradient id="movement-spark" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgba(59,130,246,0.35)" />
+                                <stop offset="100%" stopColor="rgba(59,130,246,0)" />
+                              </linearGradient>
+                            </defs>
+                            <path d={movementSparkline.areaPath} fill="url(#movement-spark)" stroke="none" />
+                            <path d={movementSparkline.linePath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" />
+                          </svg>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-xs text-soft-secondary">No movement snapshot yet.</p>
+                    )}
+                  </div>
                 </div>
 
                 <HoldingsTable
                   holdings={holdings}
-                  onRefresh={loadHoldings}
                   onEdit={openEditModal}
                   onDelete={openDeleteModal}
                   busyHoldingId={busyHoldingId}
                   accountFilter={accountFilter}
-                  setAccountFilter={setAccountFilter}
+                  accountFilterOptions={accountFilterOptions}
+                  onAccountFilterChange={setAccountFilter}
                   categoryFilter={categoryFilter}
-                  setCategoryFilter={setCategoryFilter}
+                  categoryFilterOptions={categoryFilterOptions}
+                  onCategoryFilterChange={setCategoryFilter}
                 />
               </>
             ) : (

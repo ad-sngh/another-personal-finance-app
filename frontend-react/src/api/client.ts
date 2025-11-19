@@ -62,6 +62,23 @@ export interface PortfolioHistoryPoint {
   value: number;
 }
 
+export interface MarketIndexSummary {
+  id: string;
+  name: string;
+  symbol: string;
+  price: number | null;
+  change: number | null;
+  change_percent: number | null;
+}
+
+export interface PortfolioMovementSnapshot {
+  current_value: number;
+  previous_value: number;
+  change: number;
+  change_percent: number | null;
+  since: string;
+}
+
 export const holdingsAPI = {
   getAll: () => api.get<{ holdings: Holding[] }>('/api/holdings'),
   getById: (id: string) => api.get<Holding>(`/api/holdings/${id}`),
@@ -77,4 +94,6 @@ export const holdingsAPI = {
       `/api/portfolio-history?days=${days}`,
     ),
   getPortfolioByAccountType: () => api.get<{ account_types: AccountTypeStat[] }>('/api/portfolio-by-account-type'),
+  getMarketSummary: () => api.get<{ indexes: MarketIndexSummary[] }>('/api/market-summary'),
+  getPortfolioMovement: () => api.get<PortfolioMovementSnapshot>('/api/portfolio-movement'),
 };
