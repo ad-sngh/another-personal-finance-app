@@ -173,7 +173,8 @@ def _get_holdings_snapshot(cursor):
         ) latest ON h.id = latest.max_id
         WHERE h.is_deleted = FALSE
     ''')
-    return [dict(row) for row in cursor.fetchall()]
+    rows = cursor.fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_active_holdings():
@@ -197,6 +198,17 @@ def get_active_holdings():
     return [dict(row) for row in rows]
 
 
+def _normalize_symbol(value: str | None) -> str:
+    return (value or '').strip().upper()
+
+
+def _is_cash_holding(holding: dict) -> bool:
+    category = (holding.get('category') or '').strip().lower()
+    ticker = (holding.get('ticker') or '').strip()
+    lookup = (holding.get('lookup') or '').strip()
+    return category == 'cash' or (not ticker and not lookup)
+
+
 def _get_price_rows(cursor, days):
     cursor.execute('''
         SELECT ticker,
@@ -214,7 +226,7 @@ def _build_price_map(price_rows):
     price_map = {}
     unique_dates = set()
     for row in price_rows:
-        ticker = row['ticker']
+        ticker = _normalize_symbol(row['ticker'])
         date_key = row['price_date']
         unique_dates.add(date_key)
         key = (ticker, date_key)
@@ -222,6 +234,18 @@ def _build_price_map(price_rows):
         if not existing or row['updated_at'] > existing['updated_at']:
             price_map[key] = {'price': row['price'], 'updated_at': row['updated_at']}
     return price_map, sorted(unique_dates)
+
+
+def _calculate_holding_value(holding: dict, historical_price: float | None) -> float:
+    value_override = holding.get('value_override')
+    if value_override is not None:
+        return float(value_override)
+
+    shares = holding.get('shares') or 0
+    manual_price_override = bool(holding.get('manual_price_override'))
+    use_history_price = (not manual_price_override) and (not _is_cash_holding(holding))
+    effective_price = historical_price if (use_history_price and historical_price is not None) else holding.get('current_price') or 0
+    return shares * effective_price
 
 def get_holding_by_id(id):
     """Get a single holding by ID"""
@@ -422,13 +446,10 @@ def get_portfolio_history(days=30):
     for date_key in sorted_dates:
         total_value = 0
         for holding in holdings:
-            shares = holding['shares']
-            if not shares:
-                continue
-            lookup = (holding.get('lookup') or '').strip()
-            price_entry = price_map.get((lookup, date_key)) if lookup else None
-            price = price_entry['price'] if price_entry else holding['current_price']
-            total_value += shares * price
+            symbol = _normalize_symbol(holding.get('lookup'))
+            price_entry = price_map.get((symbol, date_key)) if symbol else None
+            historical_price = price_entry['price'] if price_entry else None
+            total_value += _calculate_holding_value(holding, historical_price)
         history.append({'date': date_key, 'value': total_value})
 
     if len(history) > days:
@@ -455,13 +476,10 @@ def get_account_type_history(days=30):
     for date_key in sorted_dates:
         daily_totals = {}
         for holding in holdings:
-            shares = holding['shares']
-            if not shares:
-                continue
-            lookup = (holding.get('lookup') or '').strip()
-            price_entry = price_map.get((lookup, date_key)) if lookup else None
-            price = price_entry['price'] if price_entry else holding['current_price']
-            value = shares * price
+            symbol = _normalize_symbol(holding.get('lookup'))
+            price_entry = price_map.get((symbol, date_key)) if symbol else None
+            historical_price = price_entry['price'] if price_entry else None
+            value = _calculate_holding_value(holding, historical_price)
             account_type = holding['account_type']
             daily_totals[account_type] = daily_totals.get(account_type, 0) + value
 
@@ -503,7 +521,7 @@ def get_portfolio_history_hourly(hours=168):
     price_map = {}
     unique_timestamps = []
     for row in price_rows:
-        ticker = row['ticker']
+        ticker = _normalize_symbol(row['ticker'])
         timestamp = row['timestamp']
         price_map[(ticker, timestamp)] = row['price']
         if not unique_timestamps or unique_timestamps[-1] != timestamp:
@@ -513,14 +531,10 @@ def get_portfolio_history_hourly(hours=168):
     for ts in unique_timestamps:
         total_value = 0
         for holding in holdings:
-            shares = holding['shares']
-            if not shares:
-                continue
-            lookup = (holding.get('lookup') or '').strip()
-            price = price_map.get((lookup, ts)) if lookup else None
-            if price is None:
-                price = holding['current_price']
-            total_value += shares * price
+            symbol = _normalize_symbol(holding.get('lookup'))
+            price = price_map.get((symbol, ts)) if symbol else None
+            historical_price = price if price is not None else None
+            total_value += _calculate_holding_value(holding, historical_price)
         history.append({'timestamp': ts, 'value': total_value})
 
     if len(history) > hours:
@@ -554,14 +568,10 @@ def get_account_type_history_hourly(hours=168):
     for ts in unique_timestamps:
         daily_totals = {}
         for holding in holdings:
-            shares = holding['shares']
-            if not shares:
-                continue
-            lookup = (holding.get('lookup') or '').strip()
-            price = price_map.get((lookup, ts)) if lookup else None
-            if price is None:
-                price = holding['current_price']
-            value = shares * price
+            symbol = _normalize_symbol(holding.get('lookup'))
+            price = price_map.get((symbol, ts)) if symbol else None
+            historical_price = price if price is not None else None
+            value = _calculate_holding_value(holding, historical_price)
             account_type = holding['account_type']
             daily_totals[account_type] = daily_totals.get(account_type, 0) + value
 

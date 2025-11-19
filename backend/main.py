@@ -6,7 +6,7 @@ from pydantic import BaseModel
 import sqlite3
 import yfinance as yf
 import argparse
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict
 from database import (
     get_db,
     init_db,
@@ -28,6 +28,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 from datetime import datetime, time
+
+MARKET_INDEXES: List[Dict[str, str]] = [
+    {"id": "sp500", "symbol": "^GSPC", "name": "S&P 500"},
+    {"id": "dow", "symbol": "^DJI", "name": "Dow Jones"},
+    {"id": "nasdaq", "symbol": "^IXIC", "name": "Nasdaq"},
+]
 
 app = FastAPI(title="Portfolio Tracker", description="A simple web application to track investment holdings")
 
@@ -326,14 +332,12 @@ async def api_get_holding_history(holding_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/fetch-price")
-async def api_fetch_price(request: PriceRequest):
-    """Fetch current price and name for a ticker"""
-    ticker = request.ticker
-    
-    if not ticker:
-        raise HTTPException(status_code=400, detail="Ticker is required")
-    
+async def api_fetch_price(payload: PriceRequest):
+    ticker = payload.ticker
     price, name = fetch_price(ticker)
+    if price is None:
+        raise HTTPException(status_code=404, detail="Price not found")
+    
     if price is not None:
         # Store price history
         add_price_history(ticker, price)
@@ -402,13 +406,66 @@ async def api_get_portfolio_by_account_type():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/capture-prices")
-async def manual_price_capture():
-    """Manually trigger price capture for testing"""
-    try:
-        capture_portfolio_prices()
-        return {"message": "Price capture triggered successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def api_capture_prices():
+    capture_portfolio_prices()
+    return {"message": "Price capture triggered"}
+
+@app.get("/api/market-summary")
+async def api_market_summary():
+    summary = []
+    for index in MARKET_INDEXES:
+        price, name = fetch_price(index['symbol'])
+        if price is None:
+            summary.append({
+                "id": index['id'],
+                "name": name or index['name'],
+                "symbol": index['symbol'],
+                "price": None,
+                "change": None,
+                "change_percent": None,
+            })
+            continue
+
+        ticker = yf.Ticker(index['symbol'])
+        hist = ticker.history(period="2d", interval="1d")
+        change = None
+        change_percent = None
+        if not hist.empty and len(hist['Close']) >= 2:
+            latest = hist['Close'].iloc[-1]
+            previous = hist['Close'].iloc[-2]
+            change = float(latest - previous)
+            if previous != 0:
+                change_percent = float((change / previous) * 100)
+
+        summary.append({
+            "id": index['id'],
+            "name": name or index['name'],
+            "symbol": index['symbol'],
+            "price": price,
+            "change": change,
+            "change_percent": change_percent,
+        })
+
+    return {"indexes": summary}
+
+@app.get("/api/portfolio-movement")
+async def api_portfolio_movement(days: int = 2):
+    history = get_portfolio_history(max(days, 2))
+    if not history:
+        raise HTTPException(status_code=404, detail="Portfolio history unavailable")
+
+    latest = history[-1]
+    prior = history[-2] if len(history) >= 2 else history[0]
+    change = latest['value'] - prior['value']
+    change_percent = (change / prior['value'] * 100) if prior['value'] else None
+
+    return {
+        "current_value": latest['value'],
+        "previous_value": prior['value'],
+        "change": change,
+        "change_percent": change_percent,
+        "since": prior['date'],
+    }
 
 @app.get("/api/scheduler-status")
 async def get_scheduler_status():
