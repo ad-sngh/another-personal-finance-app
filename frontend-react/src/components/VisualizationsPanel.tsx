@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Holding, holdingsAPI, PortfolioHistoryPoint } from '../api/client';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatSignedPercentage } from '../utils/format';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -131,58 +131,69 @@ export default function VisualizationsPanel({ holdings }: VisualizationsPanelPro
   return (
     <div className="space-y-6">
       {accountStats.length ? (
-        <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Account Breakdown</h3>
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
-            {accountStats.map((stat, index) => (
-              <div key={stat.account_type} className="rounded-2xl border border-gray-100 p-4">
-                <div>
-                  <p className="text-xs uppercase tracking-wide text-gray-500">{stat.account_type}</p>
-                  <p className="text-xl font-semibold text-gray-900">{formatCurrency(stat.value)}</p>
-                </div>
-                {accountSparklines[stat.account_type]?.length ? (
-                  <div className="mt-3 h-10">
-                    <Line
-                      data={{
-                        labels: accountSparklines[stat.account_type].map((p) => p.date),
-                        datasets: [
-                          {
-                            data: accountSparklines[stat.account_type].map((p) => p.value),
-                            borderColor: colors[index % colors.length],
-                            backgroundColor: 'transparent',
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            tension: 0.4,
-                          },
-                        ],
-                      }}
-                      options={{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false }, tooltip: { enabled: false } },
-                        scales: { x: { display: false }, y: { display: false } },
-                      }}
-                    />
+        <div className="rounded-2xl bg-soft-white p-6 shadow-soft">
+          <h3 className="text-lg font-semibold text-soft-dark mb-4">Account Breakdown</h3>
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+            {accountStats.map((stat, index) => {
+              const spark = accountSparklines[stat.account_type] || [];
+              const growthPercent = stat.contribution > 0 ? ((stat.value - stat.contribution) / stat.contribution) * 100 : null;
+              const growthPositive = (growthPercent ?? 0) >= 0;
+              const growthColor = growthPositive ? 'bg-soft-success/10 text-soft-success' : 'bg-soft-danger/10 text-soft-danger';
+
+              return (
+                <div key={stat.account_type} className="rounded-2xl border border-soft-light bg-white/80 p-4 flex flex-col">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-soft-secondary">{stat.account_type}</p>
+                      <p className="text-xl font-bold text-soft-dark">{formatCurrency(stat.value)}</p>
+                    </div>
+                    <div className={`inline-flex items-center rounded-full px-3 py-0.5 text-[11px] font-semibold ${growthColor}`}>
+                      {growthPercent !== null ? formatSignedPercentage(growthPercent) : '—'}
+                    </div>
                   </div>
-                ) : null}
-                <div className="mt-3 text-sm text-gray-600 space-y-1">
-                  <p className="flex justify-between">
-                    <span>Contribution</span>
-                    <span className="font-semibold">{formatCurrency(stat.contribution)}</span>
-                  </p>
-                  <p className="flex justify-between">
-                    <span>Positions</span>
-                    <span className="font-semibold">{stat.count}</span>
-                  </p>
-                  <p className="flex justify-between">
-                    <span>Growth</span>
-                    <span className={`font-semibold ${stat.value >= stat.contribution ? 'text-green-600' : 'text-red-600'}`}>
-                      {stat.contribution > 0 ? `${((stat.value - stat.contribution) / stat.contribution * 100).toFixed(1)}%` : '—'}
-                    </span>
-                  </p>
+                  {spark.length ? (
+                    <div className="mt-3 h-16">
+                      <Line
+                        data={{
+                          labels: spark.map((p) => p.date),
+                          datasets: [
+                            {
+                              data: spark.map((p) => p.value),
+                              borderColor: colors[index % colors.length],
+                              backgroundColor: 'transparent',
+                              borderWidth: 2,
+                              pointRadius: 0,
+                              tension: 0.4,
+                            },
+                          ],
+                        }}
+                        options={{
+                          responsive: true,
+                          maintainAspectRatio: false,
+                          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                          scales: { x: { display: false }, y: { display: false } },
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-soft-secondary">Capture history to see trend.</p>
+                  )}
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-soft-secondary">
+                    <div className="rounded-xl bg-soft-light px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wide">Contribution</p>
+                      <p className="text-sm font-semibold text-soft-dark">{formatCurrency(stat.contribution)}</p>
+                    </div>
+                    <div className="rounded-xl bg-soft-light px-3 py-2 text-right">
+                      <p className="text-[10px] uppercase tracking-wide">Positions</p>
+                      <p className="text-sm font-semibold text-soft-dark">{stat.count}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 text-sm font-semibold text-soft-dark">
+                    Growth Value: {stat.contribution > 0 ? formatCurrency(stat.value - stat.contribution) : '—'}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : null}
