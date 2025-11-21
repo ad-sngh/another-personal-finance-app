@@ -278,7 +278,7 @@ def _is_cash_holding(holding: dict) -> bool:
     return category == 'cash' or (not ticker and not lookup)
 
 
-def _get_price_rows(cursor, days):
+def _get_price_rows(cursor, days, user_id: str | None = None):
     cursor.execute('''
         SELECT ticker,
                price,
@@ -527,13 +527,13 @@ def get_price_history(ticker, days=30):
     conn.close()
     return history
 
-def get_portfolio_history(days=30):
+def get_portfolio_history(days=30, user_id: str | None = None):
     """Get portfolio value history for the last N days using price history snapshots"""
     conn = get_db()
     cursor = conn.cursor()
 
-    holdings = _get_holdings_snapshot(cursor)
-    price_rows = _get_price_rows(cursor, days)
+    holdings = _get_holdings_snapshot(cursor, user_id)
+    price_rows = _get_price_rows(cursor, days, user_id)
     conn.close()
 
     if not price_rows:
@@ -557,13 +557,13 @@ def get_portfolio_history(days=30):
     return history
 
 
-def get_account_type_history(days=30):
+def get_account_type_history(days=30, user_id: str | None = None):
     """Get per-account-type value history for sparklines"""
     conn = get_db()
     cursor = conn.cursor()
 
-    holdings = _get_holdings_snapshot(cursor)
-    price_rows = _get_price_rows(cursor, days)
+    holdings = _get_holdings_snapshot(cursor, user_id)
+    price_rows = _get_price_rows(cursor, days, user_id)
     conn.close()
 
     if not price_rows:
@@ -593,7 +593,7 @@ def get_account_type_history(days=30):
     return history_by_account
 
 
-def _get_price_rows_hourly(cursor, hours):
+def _get_price_rows_hourly(cursor, hours, user_id: str | None = None):
     cursor.execute('''
         SELECT ticker,
                price,
@@ -605,13 +605,13 @@ def _get_price_rows_hourly(cursor, hours):
     return cursor.fetchall()
 
 
-def get_portfolio_history_hourly(hours=168):
+def get_portfolio_history_hourly(hours=168, user_id: str | None = None):
     """Get portfolio value history for the last N hours using hourly snapshots"""
     conn = get_db()
     cursor = conn.cursor()
 
-    holdings = _get_holdings_snapshot(cursor)
-    price_rows = _get_price_rows_hourly(cursor, hours)
+    holdings = _get_holdings_snapshot(cursor, user_id)
+    price_rows = _get_price_rows_hourly(cursor, hours, user_id)
     conn.close()
 
     if not price_rows:
@@ -642,7 +642,7 @@ def get_portfolio_history_hourly(hours=168):
     return history
 
 
-def get_account_type_history_hourly(hours=168):
+def get_account_type_history_hourly(hours=168, user_id: str | None = None):
     """Get per-account-type hourly value history"""
     conn = get_db()
     cursor = conn.cursor()

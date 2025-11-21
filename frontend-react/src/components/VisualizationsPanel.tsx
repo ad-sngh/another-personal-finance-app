@@ -25,11 +25,12 @@ ChartJS.register(
 
 interface VisualizationsPanelProps {
   holdings: Holding[];
+  userId?: string;
 }
 
 const colors = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444'];
 
-export default function VisualizationsPanel({ holdings }: VisualizationsPanelProps) {
+export default function VisualizationsPanel({ holdings, userId }: VisualizationsPanelProps) {
   const [portfolioHistory, setPortfolioHistory] = useState<PortfolioHistoryPoint[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -40,7 +41,7 @@ export default function VisualizationsPanel({ holdings }: VisualizationsPanelPro
       try {
         setHistoryLoading(true);
         setHistoryError(null);
-        const response = await holdingsAPI.getPortfolioHistory(60);
+        const response = await holdingsAPI.getPortfolioHistory(60, userId);
         setPortfolioHistory(response.data.history || []);
         setAccountHistories((response.data.account_type_history as Record<string, PortfolioHistoryPoint[]>) || {});
       } catch (error) {
@@ -52,7 +53,7 @@ export default function VisualizationsPanel({ holdings }: VisualizationsPanelPro
     };
 
     loadHistory();
-  }, []);
+  }, [userId]);
 
   const accountStats = useMemo(() => {
     if (!holdings?.length) return [];

@@ -974,7 +974,7 @@ export default function Dashboard() {
                 />
               </>
             ) : (
-              <VisualizationsPanel holdings={holdings} />
+              <VisualizationsPanel holdings={holdings} userId={currentUserId} />
             )}
           </main>
         </div>
