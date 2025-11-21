@@ -1,27 +1,34 @@
-import { useEffect, useMemo, useState, type ComponentType } from 'react';
-import { TrendingUp, X, AlertTriangle, Menu, LayoutDashboard, BarChart3 } from 'lucide-react';
-import { holdingsAPI, Holding, HoldingPayload, MarketIndexSummary, PortfolioMovementSnapshot } from '../api/client';
+import { useEffect, useMemo, useState, useCallback, type ComponentType } from 'react';
+import { TrendingUp, TrendingDown, X, AlertTriangle, Menu, LayoutDashboard, BarChart3, Users } from 'lucide-react';
+import { holdingsAPI, usersAPI, Holding, HoldingPayload, MarketIndexSummary, PortfolioMovementSnapshot, MovementRangeOption, User } from '../api/client';
 import HoldingsTable from './HoldingsTable';
 import StatsCard from './StatsCard';
 import VisualizationsPanel from './VisualizationsPanel';
-import { formatCurrency, formatPercentage, formatSignedPercentage } from '../utils/format';
+import { formatCurrency, formatSignedPercentage } from '../utils/format';
 
 const ACCOUNT_TYPE_PRESETS = ['Taxable', 'TFSA', 'RRSP', 'RESP', 'Cash', 'Brokerage'];
 const CATEGORY_PRESETS = ['Stocks', 'ETF', 'Cash', 'Crypto', 'Bond', 'Mutual Fund'];
 const ALLOCATION_COLORS = ['bg-amber-400', 'bg-blue-500', 'bg-indigo-400', 'bg-emerald-400', 'bg-slate-400'];
+const EST_TIMEZONE = 'America/New_York';
+const EST_SUFFIX = ' EST';
 
 export default function Dashboard() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [stats, setStats] = useState({
+  const [backendTotals, setBackendTotals] = useState({
     totalValue: 0,
     totalContribution: 0,
     totalGain: 0,
     gainPercentage: 0,
+    holdingsCount: 0,
   });
+  const [users, setUsers] = useState<User[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string>('default');
   const [accountFilter, setAccountFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState('All');
+  const [excludedAccounts, setExcludedAccounts] = useState<string[]>([]);
+  const [excludedCategories, setExcludedCategories] = useState<string[]>([]);
   const [modalMode, setModalMode] = useState<'add' | 'edit' | 'delete'>('add');
   const [modalOpen, setModalOpen] = useState(false);
   const [activeHolding, setActiveHolding] = useState<Holding | null>(null);
@@ -51,18 +58,62 @@ export default function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [marketIndexes, setMarketIndexes] = useState<MarketIndexSummary[]>([]);
   const [portfolioMovement, setPortfolioMovement] = useState<PortfolioMovementSnapshot | null>(null);
-  const [movementRange, setMovementRange] = useState<'7d' | '1m' | '3m' | 'ytd' | 'all'>('1m');
+  const [movementRange, setMovementRange] = useState<MovementRangeOption>('1m');
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [movementLoading, setMovementLoading] = useState(true);
+  const [movementError, setMovementError] = useState<string | null>(null);
   const accountFilterOptions = useMemo(() => ['All', ...Array.from(new Set(holdings.map(h => h.account_type).filter(Boolean)))], [holdings]);
   const categoryFilterOptions = useMemo(() => ['All', ...Array.from(new Set(holdings.map(h => h.category).filter(Boolean)))], [holdings]);
+
+  const handleAccountFilterChange = useCallback((option: string) => {
+    setAccountFilter(option);
+  }, []);
+
+  const handleCategoryFilterChange = useCallback((option: string) => {
+    setCategoryFilter(option);
+  }, []);
+
+  const toggleAccountExclusion = useCallback((option: string) => {
+    if (option === 'All') return;
+    setExcludedAccounts((prev) => {
+      const exists = prev.includes(option);
+      const next = exists ? prev.filter((value) => value !== option) : [...prev, option];
+      return next;
+    });
+    if (accountFilter === option) {
+      setAccountFilter('All');
+    }
+  }, [accountFilter]);
+
+  const toggleCategoryExclusion = useCallback((option: string) => {
+    if (option === 'All') return;
+    setExcludedCategories((prev) => {
+      const exists = prev.includes(option);
+      const next = exists ? prev.filter((value) => value !== option) : [...prev, option];
+      return next;
+    });
+    if (categoryFilter === option) {
+      setCategoryFilter('All');
+    }
+  }, [categoryFilter]);
   const filteredHoldings = useMemo(() => {
+    const excludedAccountSet = new Set(excludedAccounts);
+    const excludedCategorySet = new Set(excludedCategories);
     return holdings.filter((holding) => {
-      const accountMatch = accountFilter === 'All' || holding.account_type === accountFilter;
-      const categoryMatch = categoryFilter === 'All' || holding.category === categoryFilter;
+      const accountMatch = (accountFilter === 'All' || holding.account_type === accountFilter) && !excludedAccountSet.has(holding.account_type);
+      const categoryMatch = (categoryFilter === 'All' || holding.category === categoryFilter) && !excludedCategorySet.has(holding.category);
       return accountMatch && categoryMatch;
     });
-  }, [holdings, accountFilter, categoryFilter]);
+  }, [holdings, accountFilter, categoryFilter, excludedAccounts, excludedCategories]);
+
+  const stats = useMemo(() => {
+    const totalValue = filteredHoldings.reduce((sum, h) => sum + h.value, 0);
+    const totalContribution = filteredHoldings.reduce((sum, h) => sum + h.contribution, 0);
+    const totalGain = totalValue - totalContribution;
+    const gainPercentage = totalContribution > 0 ? (totalGain / totalContribution) * 100 : 0;
+    return { totalValue, totalContribution, totalGain, gainPercentage };
+  }, [filteredHoldings]);
 
   const portfolioSparkline = useMemo(() => {
     if (!filteredHoldings.length) {
@@ -83,8 +134,33 @@ export default function Dashboard() {
     return samples;
   }, [filteredHoldings]);
 
+  const backendCurrentValue = backendTotals.totalValue || 0;
+  const currentRatio = backendCurrentValue > 0 ? stats.totalValue / backendCurrentValue : 1;
+
+  const movementPoints = useMemo(() => {
+    if (!portfolioMovement?.points || !portfolioMovement.points.length) return undefined;
+    return portfolioMovement.points.map((point, index) => {
+      const scaledValue = currentRatio * point.value;
+      if (index === portfolioMovement.points!.length - 1) {
+        return { ...point, value: stats.totalValue };
+      }
+      return { ...point, value: scaledValue };
+    });
+  }, [portfolioMovement?.points, stats.totalValue, currentRatio]);
+
+  const movementValues = movementPoints?.map((point) => point.value);
+
+  const FALLBACK_SPARKLINE = useMemo(() => [0, 1, 0.5, 1.2, 0.8, 1.4, 1], []);
+
+  const formatPointsToSparkline = (values: number[] | undefined, fallback: number[] = FALLBACK_SPARKLINE) => {
+    if (!values || values.length < 2) return fallback;
+    return values;
+  };
+
+  const sharedSparklineValues = formatPointsToSparkline(movementValues, portfolioSparkline);
+
   const movementSparkline = useMemo(() => {
-    const values = portfolioSparkline;
+    const values = sharedSparklineValues;
     const width = 200;
     const height = 55;
     const padding = 6;
@@ -99,7 +175,88 @@ export default function Dashboard() {
     const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`).join(' ');
     const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
     return { width, height, linePath, areaPath };
-  }, [portfolioSparkline]);
+  }, [sharedSparklineValues]);
+
+  const formatTimestampEST = useCallback((value?: string | null, options?: Intl.DateTimeFormatOptions) => {
+    if (!value) return null;
+    try {
+      const normalizedValue = /Z|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+      const formatter = new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: EST_TIMEZONE,
+        ...options,
+      });
+      return `${formatter.format(new Date(normalizedValue))}${EST_SUFFIX}`;
+    } catch (error) {
+      console.warn('Failed to format timestamp', error);
+      return new Date(value).toLocaleString();
+    }
+  }, []);
+
+  const formatRelativeTime = useCallback((value?: string | null) => {
+    if (!value) return null;
+    try {
+      const normalizedValue = /Z|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`;
+      const timestamp = new Date(normalizedValue);
+      if (Number.isNaN(timestamp.getTime())) return null;
+      const diffSeconds = Math.max(0, Math.round((Date.now() - timestamp.getTime()) / 1000));
+      const units: { limit: number; divisor: number; label: Intl.RelativeTimeFormatUnit }[] = [
+        { limit: 60, divisor: 1, label: 'second' },
+        { limit: 3600, divisor: 60, label: 'minute' },
+        { limit: 86400, divisor: 3600, label: 'hour' },
+        { limit: 604800, divisor: 86400, label: 'day' },
+        { limit: 2592000, divisor: 604800, label: 'week' },
+        { limit: Infinity, divisor: 2592000, label: 'month' },
+      ];
+      const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+      for (const unit of units) {
+        if (diffSeconds < unit.limit) {
+          const valueInUnit = Math.max(1, Math.floor(diffSeconds / unit.divisor));
+          return relative.format(-valueInUnit, unit.label);
+        }
+      }
+      return null;
+    } catch (error) {
+      console.warn('Failed to format relative time', error);
+      return null;
+    }
+  }, []);
+
+  const movementPreviousValueRaw = portfolioMovement?.previous_value ?? stats.totalValue;
+  const movementPreviousValue = movementPreviousValueRaw * currentRatio;
+  const movementChange = stats.totalValue - movementPreviousValue;
+  const movementChangePercent = movementPreviousValue ? (movementChange / movementPreviousValue) * 100 : null;
+
+  const movementData = useMemo(() => {
+    if (!portfolioMovement) return null;
+    return {
+      ...portfolioMovement,
+      current_value: stats.totalValue,
+      previous_value: movementPreviousValue,
+      change: movementChange,
+      change_percent: movementChangePercent,
+      points: movementPoints ?? portfolioMovement.points,
+    };
+  }, [portfolioMovement, stats.totalValue, movementPreviousValue, movementChange, movementChangePercent, movementPoints]);
+
+  const lastUpdatedLabel = formatTimestampEST(movementData?.last_updated_at);
+  const lastUpdatedRelative = formatRelativeTime(movementData?.last_updated_at);
+
+  const movementSparklineWidthValue = movementSparkline.width;
+  const portfolioValueTrendColor = movementChange >= 0 ? 'text-emerald-700' : 'text-rose-600';
+  const portfolioValueTrendIcon = movementChange >= 0 ? (
+    <TrendingUp className="h-5 w-5" aria-hidden />
+  ) : (
+    <TrendingDown className="h-5 w-5" aria-hidden />
+  );
+
+  const gainTrendColor = stats.totalGain >= 0 ? 'text-emerald-700' : 'text-rose-600';
+  const gainTrendIcon = stats.totalGain >= 0 ? (
+    <TrendingUp className="h-5 w-5" aria-hidden />
+  ) : (
+    <TrendingDown className="h-5 w-5" aria-hidden />
+  );
 
   const topAccountSnapshot = useMemo(() => {
     if (!holdings.length) return null as { label: string; value: number } | null;
@@ -134,9 +291,15 @@ export default function Dashboard() {
   }, [holdings]);
 
   useEffect(() => {
+    loadUsers();
     loadHoldings();
     loadMarketContext();
   }, []);
+
+  useEffect(() => {
+    loadHoldings();
+    loadPortfolioMovement(movementRange);
+  }, [currentUserId]);
 
   const defaultPayload = useMemo<HoldingPayload>(() => ({
     account_type: '',
@@ -219,6 +382,7 @@ export default function Dashboard() {
     try {
       await holdingsAPI.capturePrices();
       await loadHoldings();
+      await loadPortfolioMovement(movementRange);
       setStatusMessage({ type: 'success', text: 'Prices updated using the latest market data.' });
     } catch (error) {
       setStatusMessage({ type: 'error', text: extractError(error) });
@@ -230,14 +394,29 @@ export default function Dashboard() {
   const loadHoldings = async () => {
     try {
       setLoadError(null);
-      const response = await holdingsAPI.getAll();
-      const holdingsData = response.data.holdings;
-      setHoldings(holdingsData);
+      const response = await holdingsAPI.getAll(currentUserId);
+      setHoldings(response.data.holdings);
+      setBackendTotals({
+        totalValue: response.data.stats.total_value,
+        totalContribution: response.data.stats.total_cost,
+        totalGain: response.data.stats.total_gain,
+        gainPercentage: response.data.stats.total_gain_percent,
+        holdingsCount: response.data.stats.holdings_count,
+      });
     } catch (error) {
-      setLoadError('Unable to fetch holdings. Please confirm the backend API is running on port 8081.');
-      console.error('Error loading holdings:', error);
+      console.error('Failed to load holdings:', error);
+      setLoadError('Failed to load holdings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const response = await usersAPI.getAll();
+      setUsers(response.data.users);
+    } catch (error) {
+      console.error('Failed to load users:', error);
     }
   };
 
@@ -245,12 +424,8 @@ export default function Dashboard() {
     setMarketLoading(true);
     setMarketError(null);
     try {
-      const [indexesResponse, movementResponse] = await Promise.all([
-        holdingsAPI.getMarketSummary(),
-        holdingsAPI.getPortfolioMovement(),
-      ]);
+      const indexesResponse = await holdingsAPI.getMarketSummary();
       setMarketIndexes(indexesResponse.data.indexes);
-      setPortfolioMovement(movementResponse.data);
     } catch (error) {
       console.error('Error loading market context:', error);
       setMarketError('Unable to load market data right now.');
@@ -259,14 +434,23 @@ export default function Dashboard() {
     }
   };
 
-  useEffect(() => {
-    const totalValue = filteredHoldings.reduce((sum, h) => sum + h.value, 0);
-    const totalContribution = filteredHoldings.reduce((sum, h) => sum + h.contribution, 0);
-    const totalGain = totalValue - totalContribution;
-    const gainPercentage = totalContribution > 0 ? (totalGain / totalContribution) * 100 : 0;
+  const loadPortfolioMovement = useCallback(async (rangeOverride: MovementRangeOption) => {
+    setMovementLoading(true);
+    setMovementError(null);
+    try {
+      const response = await holdingsAPI.getPortfolioMovement(rangeOverride, currentUserId);
+      setPortfolioMovement(response.data);
+    } catch (error) {
+      console.error('Error loading portfolio movement:', error);
+      setMovementError('Unable to load movement data.');
+    } finally {
+      setMovementLoading(false);
+    }
+  }, [currentUserId]);
 
-    setStats({ totalValue, totalContribution, totalGain, gainPercentage });
-  }, [filteredHoldings]);
+  useEffect(() => {
+    loadPortfolioMovement(movementRange);
+  }, [movementRange, loadPortfolioMovement]);
 
   const openAddModal = () => {
     setModalMode('add');
@@ -506,6 +690,18 @@ export default function Dashboard() {
                   </h1>
                 </div>
                 <div className="hidden items-center gap-3 md:flex">
+                  <div className="relative">
+                    <select
+                      value={currentUserId}
+                      onChange={e => setCurrentUserId(e.target.value)}
+                      className="appearance-none bg-white border border-soft-primary rounded-xl px-4 py-2 pr-10 text-sm font-semibold text-soft-primary hover:bg-soft-primary hover:text-white transition cursor-pointer"
+                    >
+                      {users.map(u => (
+                        <option key={u.user_id} value={u.user_id}>{u.display_name}</option>
+                      ))}
+                    </select>
+                    <Users className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none text-soft-primary" />
+                  </div>
                   <button
                     type="button"
                     className="inline-flex items-center rounded-xl border border-soft-primary px-4 py-2 text-sm font-semibold text-soft-primary hover:bg-soft-primary hover:text-white transition"
@@ -548,45 +744,71 @@ export default function Dashboard() {
             )}
             {activeTab === 'overview' ? (
               <>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
                   <StatsCard
                     title="Portfolio Value"
-                    value={formatCurrency(stats.totalValue)}
-                    subtitle={portfolioMovement?.since ? `Last updated ${new Date(portfolioMovement.since).toLocaleString()}` : '90d'}
-                    deltaLabel={
-                      portfolioMovement?.change !== null && portfolioMovement?.change !== undefined
-                        ? `${(portfolioMovement.change ?? 0) >= 0 ? '+' : '-'}${formatCurrency(Math.abs(portfolioMovement.change ?? 0))}` +
-                          (portfolioMovement.change_percent !== null && portfolioMovement.change_percent !== undefined
-                            ? ` · ${formatSignedPercentage(portfolioMovement.change_percent)}`
-                            : '')
-                        : undefined
+                    customBody={
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-soft-secondary">Portfolio Value</p>
+                            <p className="text-3xl font-black tracking-tight text-soft-dark">{formatCurrency(stats.totalValue)}</p>
+                          </div>
+                          <div className="text-right">
+                            <div className={`flex items-center justify-end gap-1 text-2xl font-bold ${portfolioValueTrendColor}`}>
+                              {portfolioValueTrendIcon}
+                              <span>{movementChangePercent !== null ? formatSignedPercentage(movementChangePercent) : '—'}</span>
+                            </div>
+                            {movementData && (
+                              <div className={`text-sm font-semibold ${portfolioValueTrendColor}`}>
+                                {movementChange >= 0 ? '+' : '-'}
+                                {formatCurrency(Math.abs(movementChange))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     }
-                    tone={stats.totalGain >= 0 ? 'positive' : 'negative'}
-                    sparkValues={portfolioSparkline}
+                    sparkValues={sharedSparklineValues}
+                    sparklineWidth={movementSparklineWidthValue}
+                    footer={
+                      lastUpdatedRelative ? (
+                        <span title={lastUpdatedLabel ?? undefined}>Updated {lastUpdatedRelative}</span>
+                      ) : lastUpdatedLabel ? (
+                        `Updated ${lastUpdatedLabel}`
+                      ) : undefined
+                    }
                   />
                   <StatsCard
                     title="Total Gain/Loss"
-                    value={formatCurrency(stats.totalGain)}
-                    subtitle={stats.totalContribution ? `${formatCurrency(stats.totalContribution)} contributed` : 'vs contribution'}
-                    tone={stats.totalGain >= 0 ? 'positive' : 'negative'}
-                    sparkValues={portfolioSparkline}
-                    action={
-                      <div className="text-right">
-                        <p className="text-[11px] uppercase tracking-wide text-soft-secondary">Return</p>
-                        <p className={`text-xl font-bold ${stats.totalGain >= 0 ? 'text-soft-success' : 'text-soft-danger'}`}>
-                          {formatPercentage(stats.gainPercentage)}
-                        </p>
+                    customBody={
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-soft-secondary">Total Gain/Loss</p>
+                            <p className="text-3xl font-black tracking-tight text-soft-dark">{formatCurrency(stats.totalGain)}</p>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs uppercase tracking-wide text-soft-secondary mb-1">Return</div>
+                            <div className={`flex items-center justify-end gap-2 text-2xl font-bold ${gainTrendColor}`}>
+                              {gainTrendIcon}
+                              <span>{formatSignedPercentage(stats.gainPercentage)}</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     }
+                    sparkValues={sharedSparklineValues}
+                    footer={stats.totalContribution ? `${formatCurrency(stats.totalContribution)} contributed` : undefined}
                   />
-                  <div className="rounded-2xl bg-soft-white p-4 shadow-soft">
+                  <div className="rounded-xl bg-soft-white p-3 shadow-soft">
                     <p className="text-xs font-semibold uppercase tracking-wide text-soft-secondary">Market Update</p>
                     {marketLoading ? (
-                      <p className="mt-4 text-sm text-soft-secondary">Syncing latest index data…</p>
+                      <p className="mt-3 text-sm text-soft-secondary">Syncing latest index data…</p>
                     ) : marketError ? (
-                      <p className="mt-4 text-sm text-soft-danger">{marketError}</p>
+                      <p className="mt-3 text-sm text-soft-danger">{marketError}</p>
                     ) : marketIndexes.length ? (
-                      <div className="mt-3 divide-y divide-soft-light/70 border border-soft-light rounded-2xl overflow-hidden">
+                      <div className="mt-2.5 divide-y divide-soft-light/70 border border-soft-light rounded-xl overflow-hidden">
                         {marketIndexes.slice(0, 3).map((index) => {
                           const positive = (index.change ?? 0) >= 0;
                           return (
@@ -595,20 +817,20 @@ export default function Dashboard() {
                               href={`https://finance.yahoo.com/quote/${encodeURIComponent(index.symbol)}`}
                               target="_blank"
                               rel="noreferrer"
-                              className="flex items-center justify-between gap-4 bg-white/70 px-4 py-3 hover:bg-soft-light/60 transition"
+                              className="flex items-center justify-between gap-3 bg-white/70 px-3 py-2.5 hover:bg-soft-light/60 transition"
                             >
                               <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-soft-secondary">{index.symbol}</p>
-                                <p className="text-base font-semibold text-soft-dark truncate">{index.name}</p>
+                                <p className="text-sm font-semibold text-soft-dark truncate">{index.name}</p>
                               </div>
                               <div className="text-right">
-                                <p className="text-lg font-semibold text-soft-dark">
+                                <p className="text-base font-semibold text-soft-dark">
                                   {index.price !== null ? formatCurrency(index.price) : '—'}
                                 </p>
-                                <p className={`text-sm font-semibold ${positive ? 'text-soft-success' : 'text-soft-danger'}`}>
+                                <p className={`text-xs font-semibold ${positive ? 'text-soft-success' : 'text-soft-danger'}`}>
                                   {index.change !== null ? `${positive ? '+' : '-'}${formatCurrency(Math.abs(index.change))}` : '—'}
                                   {index.change_percent !== null && (
-                                    <span className="ml-2 text-xs">{formatSignedPercentage(index.change_percent)}</span>
+                                    <span className="ml-2 text-[11px]">{formatSignedPercentage(index.change_percent)}</span>
                                   )}
                                 </p>
                               </div>
@@ -617,17 +839,17 @@ export default function Dashboard() {
                         })}
                       </div>
                     ) : (
-                      <p className="mt-4 text-sm text-soft-secondary">No market indexes available.</p>
+                      <p className="mt-3 text-sm text-soft-secondary">No market indexes available.</p>
                     )}
                   </div>
                 </div>
 
-                <div className="mb-4 grid gap-3.5 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
-                  <div className="rounded-2xl bg-soft-white p-3 shadow-soft">
-                    <div className="flex items-center justify-between">
+                <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+                  <div className="rounded-xl bg-soft-white p-3 shadow-soft">
+                    <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-[11px] uppercase tracking-wide text-soft-secondary font-semibold">Total Contribution</p>
-                        <div className="mt-0.5 text-xl font-bold text-soft-dark">{formatCurrency(stats.totalContribution)}</div>
+                        <div className="mt-0.5 text-2xl font-bold text-soft-dark">{formatCurrency(stats.totalContribution)}</div>
                         {stats.totalValue <= 0 && (
                           <p className="text-[11px] text-soft-secondary mt-0.5">Add holdings to build your baseline</p>
                         )}
@@ -640,13 +862,13 @@ export default function Dashboard() {
                         </div>
                       )}
                     </div>
-                    <div className="mt-3 space-y-2">
+                    <div className="mt-2.5 space-y-2">
                       <p className="text-[11px] uppercase tracking-wide text-soft-secondary font-semibold">Allocation</p>
                       {allocationBreakdown.length ? (
                         allocationBreakdown.map((slice) => (
                           <div key={slice.label} className="space-y-1">
                             <div className="flex items-center justify-between text-[11px] text-soft-secondary">
-                              <span className="font-semibold text-soft-dark">{slice.label}</span>
+                              <span className="font-semibold text-soft-dark text-xs">{slice.label}</span>
                               <span>{slice.percent.toFixed(1)}%</span>
                             </div>
                             <div className="h-1 w-full rounded-full bg-soft-light overflow-hidden">
@@ -662,21 +884,21 @@ export default function Dashboard() {
                       )}
                     </div>
                   </div>
-                  <div className="rounded-2xl bg-soft-white p-3.5 shadow-soft flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="rounded-xl bg-soft-white p-3 shadow-soft flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
                       <div>
                         <p className="text-[11px] uppercase tracking-wide text-soft-secondary font-semibold">Portfolio Movement</p>
                         <p className="text-[11px] text-soft-secondary">
-                          Since {portfolioMovement?.since ? new Date(portfolioMovement.since).toLocaleDateString() : 'last sync'} · Range {movementRange.toUpperCase()}
+                          Updated {lastUpdatedLabel ?? '—'} · Range {(movementData?.range || movementRange).toUpperCase()}
                         </p>
                       </div>
-                      <div className="flex items-center gap-1 rounded-full bg-soft-light px-1.5 py-0.5">
+                      <div className="flex items-center gap-1 rounded-full bg-soft-light px-1 py-0.5">
                         {(['7d', '1m', '3m', 'ytd', 'all'] as const).map((option) => (
                           <button
                             key={option}
                             type="button"
                             onClick={() => setMovementRange(option)}
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold transition ${
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
                               movementRange === option ? 'bg-soft-primary text-white shadow-soft' : 'text-soft-secondary'
                             }`}
                           >
@@ -685,38 +907,38 @@ export default function Dashboard() {
                         ))}
                       </div>
                     </div>
-                    {marketLoading ? (
+                    {movementLoading ? (
                       <div className="flex h-16 items-center justify-center">
                         <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-soft-primary"></div>
                       </div>
-                    ) : portfolioMovement ? (
+                    ) : movementError ? (
+                      <p className="text-sm text-soft-danger">{movementError}</p>
+                    ) : movementData ? (
                       <>
-                        <div className="flex flex-wrap items-end justify-between gap-3">
+                        <div className="flex flex-wrap items-end justify-between gap-2.5">
                           <div>
                             <p className="text-[11px] uppercase tracking-wide text-soft-secondary">Net Change</p>
                             <p className={`text-2xl font-bold ${
-                              (portfolioMovement.change ?? 0) >= 0 ? 'text-soft-success' : 'text-soft-danger'
+                              movementChange >= 0 ? 'text-soft-success' : 'text-soft-danger'
                             }`}>
-                              {portfolioMovement.change !== null
-                                ? `${(portfolioMovement.change ?? 0) >= 0 ? '+' : '-'}${formatCurrency(Math.abs(portfolioMovement.change ?? 0))}`
-                                : '—'}
-                              {portfolioMovement.change_percent !== null && (
-                                <span className="ml-2 text-lg">{formatSignedPercentage(portfolioMovement.change_percent)}</span>
+                              {`${movementChange >= 0 ? '+' : '-'}${formatCurrency(Math.abs(movementChange))}`}
+                              {movementChangePercent !== null && (
+                                <span className="ml-2 text-base">{formatSignedPercentage(movementChangePercent)}</span>
                               )}
                             </p>
                             <p className="text-[11px] text-soft-secondary mt-0.5">
-                              {portfolioMovement.previous_value !== null && portfolioMovement.current_value !== null
-                                ? `${formatCurrency(portfolioMovement.previous_value)} → ${formatCurrency(portfolioMovement.current_value)}`
+                              {movementData.previous_value !== null
+                                ? `${formatCurrency(movementData.previous_value)} → ${formatCurrency(movementData.current_value)}`
                                 : 'Awaiting snapshot data'}
                             </p>
                           </div>
-                          <div className="rounded-2xl bg-soft-light px-4 py-2 text-right">
+                          <div className="rounded-xl bg-soft-light px-3 py-1.5 text-right">
                             <p className="text-xs uppercase tracking-wide text-soft-secondary">Current Value</p>
-                            <p className="text-2xl font-bold text-soft-dark">{formatCurrency(portfolioMovement.current_value ?? stats.totalValue)}</p>
+                            <p className="text-xl font-bold text-soft-dark">{formatCurrency(movementData.current_value)}</p>
                           </div>
                         </div>
-                        <div className="rounded-2xl bg-blue-50/60 p-1">
-                          <svg viewBox={`0 0 ${movementSparkline.width} ${movementSparkline.height}`} className="w-full" preserveAspectRatio="none">
+                        <div className="rounded-xl bg-blue-50/60 p-0.5">
+                          <svg viewBox={`0 0 ${movementSparkline.width} ${movementSparkline.height}`} className="w-full h-32" preserveAspectRatio="none">
                             <defs>
                               <linearGradient id="movement-spark" x1="0%" y1="0%" x2="0%" y2="100%">
                                 <stop offset="0%" stopColor="rgba(59,130,246,0.35)" />
@@ -741,10 +963,14 @@ export default function Dashboard() {
                   busyHoldingId={busyHoldingId}
                   accountFilter={accountFilter}
                   accountFilterOptions={accountFilterOptions}
-                  onAccountFilterChange={setAccountFilter}
+                  onAccountFilterChange={handleAccountFilterChange}
+                  onAccountExclusionToggle={toggleAccountExclusion}
+                  excludedAccounts={excludedAccounts}
                   categoryFilter={categoryFilter}
                   categoryFilterOptions={categoryFilterOptions}
-                  onCategoryFilterChange={setCategoryFilter}
+                  onCategoryFilterChange={handleCategoryFilterChange}
+                  onCategoryExclusionToggle={toggleCategoryExclusion}
+                  excludedCategories={excludedCategories}
                 />
               </>
             ) : (

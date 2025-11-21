@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.path.join(BASE_DIR, 'portfolio.db')
@@ -29,6 +29,16 @@ def init_db():
     cursor = conn.cursor()
     
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_info (
+            user_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS holdings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             holding_id TEXT NOT NULL,  -- UUID to group versions of the same holding
@@ -46,7 +56,11 @@ def init_db():
             is_deleted BOOLEAN DEFAULT FALSE,  -- Soft delete support
             track_price BOOLEAN DEFAULT TRUE,
             manual_price_override BOOLEAN DEFAULT FALSE,
-            value_override REAL
+            value_override REAL,
+            convert_to_cad BOOLEAN DEFAULT FALSE,
+            cad_conversion_rate REAL,
+            user_id TEXT NOT NULL DEFAULT 'default',
+            FOREIGN KEY (user_id) REFERENCES user_info(user_id)
         )
     ''')
     
@@ -93,6 +107,10 @@ def init_db():
         cursor.execute('UPDATE holdings SET manual_price_override = FALSE WHERE manual_price_override IS NULL')
     if 'value_override' not in columns:
         cursor.execute('ALTER TABLE holdings ADD COLUMN value_override REAL')
+    if 'convert_to_cad' not in columns:
+        cursor.execute('ALTER TABLE holdings ADD COLUMN convert_to_cad BOOLEAN DEFAULT FALSE')
+    if 'cad_conversion_rate' not in columns:
+        cursor.execute('ALTER TABLE holdings ADD COLUMN cad_conversion_rate REAL')
 
     # Normalize legacy categories (e.g., ETFs -> ETF)
     cursor.execute("UPDATE holdings SET category = 'ETF' WHERE LOWER(TRIM(category)) IN ('etf', 'etfs')")
@@ -103,7 +121,38 @@ def init_db():
     if 'updated_at' not in price_columns:
         cursor.execute('ALTER TABLE price_history ADD COLUMN updated_at TIMESTAMP')
         cursor.execute('UPDATE price_history SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)')
-    
+
+    # Insert primary user if not exists
+    cursor.execute('INSERT OR IGNORE INTO user_info (user_id, display_name, email) VALUES (?, ?, ?)', ('default', 'Primary User', 'primary@example.com'))
+
+    # Migrate existing rows to 'default' if user_id column was just added
+    cursor.execute('PRAGMA table_info(holdings)')
+    holdings_columns = [column[1] for column in cursor.fetchall()]
+    if 'user_id' not in holdings_columns:
+        cursor.execute('ALTER TABLE holdings ADD COLUMN user_id TEXT NOT NULL DEFAULT "default"')
+        cursor.execute('UPDATE holdings SET user_id = "default" WHERE user_id IS NULL')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_holdings_user_id
+            ON holdings(user_id)
+        ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT 'default',
+            captured_at TIMESTAMP NOT NULL,
+            total_value REAL NOT NULL,
+            total_contribution REAL NOT NULL,
+            total_gain REAL NOT NULL,
+            total_gain_percent REAL NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES user_info(user_id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_user_time
+        ON portfolio_snapshots(user_id, captured_at)
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -131,13 +180,13 @@ def ensure_price_history_seed(
         price = 0
     add_price_history(ticker, price)
 
-def get_all_holdings():
+def get_all_holdings(user_id: str | None = None):
     """Get all holdings from database (only latest versions, not deleted)"""
     conn = get_db()
     cursor = conn.cursor()
     
     # Get only the latest version of each holding that is not deleted
-    cursor.execute('''
+    query = '''
         SELECT h.*, ph.price AS latest_price, ph.updated_at AS price_updated_at
         FROM holdings h
         LEFT JOIN price_history ph
@@ -154,15 +203,25 @@ def get_all_holdings():
             GROUP BY holding_id
         ) latest ON h.id = latest.max_id
         WHERE h.is_deleted = FALSE
-        ORDER BY h.account_type, h.account, h.name
-    ''')
+    '''
+    params = []
+    if user_id is not None:
+        query += ' AND h.user_id = ?'
+        params.append(user_id)
+    query += ' ORDER BY h.account_type, h.account, h.name'
+    
+    cursor.execute(query, params)
     holdings = cursor.fetchall()
     conn.close()
     return holdings
 
+def get_all_holdings_for_user(user_id: str):
+    """Convenient wrapper to get holdings for a specific user."""
+    return get_all_holdings(user_id=user_id)
 
-def _get_holdings_snapshot(cursor):
-    cursor.execute('''
+
+def _get_holdings_snapshot(cursor, user_id: str | None = None):
+    query = '''
         SELECT h.*
         FROM holdings h
         INNER JOIN (
@@ -172,15 +231,20 @@ def _get_holdings_snapshot(cursor):
             GROUP BY holding_id
         ) latest ON h.id = latest.max_id
         WHERE h.is_deleted = FALSE
-    ''')
+    '''
+    params = []
+    if user_id is not None:
+        query += ' AND h.user_id = ?'
+        params.append(user_id)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     return [dict(row) for row in rows]
 
 
-def get_active_holdings():
+def get_active_holdings(user_id: str | None = None):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('''
+    query = '''
         SELECT h.* FROM holdings h
         INNER JOIN (
             SELECT holding_id, MAX(id) as max_id
@@ -192,7 +256,12 @@ def get_active_holdings():
           AND h.track_price = TRUE
           AND h.lookup IS NOT NULL
           AND TRIM(h.lookup) != ''
-    ''')
+    '''
+    params = []
+    if user_id is not None:
+        query += ' AND h.user_id = ?'
+        params.append(user_id)
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -275,11 +344,26 @@ def create_holding(data):
 
     cursor.execute('''
         INSERT INTO holdings (holding_id, account_type, account, ticker, name, category, 
-                            lookup, shares, cost, current_price, contribution, track_price, manual_price_override, value_override)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (holding_id, data['account_type'], data['account'], data['ticker'], data['name'],
-          category, data['lookup'], data['shares'], data['cost'],
-          data['current_price'], contribution, track_price, manual_price_override, data.get('value_override')))
+                            lookup, shares, cost, current_price, contribution, track_price, manual_price_override, value_override, convert_to_cad, cad_conversion_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        holding_id,
+        data['account_type'],
+        data['account'],
+        data['ticker'],
+        data['name'],
+        category,
+        data['lookup'],
+        data['shares'],
+        data['cost'],
+        data['current_price'],
+        contribution,
+        track_price,
+        manual_price_override,
+        data.get('value_override'),
+        bool(data.get('convert_to_cad', False)),
+        data.get('cad_conversion_rate'),
+    ))
 
     conn.commit()
     holding_db_id = cursor.lastrowid
@@ -320,11 +404,26 @@ def update_holding(id, data):
 
     cursor.execute('''
         INSERT INTO holdings (holding_id, account_type, account, ticker, name, category, 
-                            lookup, shares, cost, current_price, contribution, track_price, manual_price_override, value_override)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (holding_id, data['account_type'], data['account'], data['ticker'], data['name'],
-          category, data['lookup'], data['shares'], data['cost'],
-          data['current_price'], contribution, track_price, manual_price_override, data.get('value_override')))
+                            lookup, shares, cost, current_price, contribution, track_price, manual_price_override, value_override, convert_to_cad, cad_conversion_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        holding_id,
+        data['account_type'],
+        data['account'],
+        data['ticker'],
+        data['name'],
+        category,
+        data['lookup'],
+        data['shares'],
+        data['cost'],
+        data['current_price'],
+        contribution,
+        track_price,
+        manual_price_override,
+        data.get('value_override'),
+        bool(data.get('convert_to_cad', False)),
+        data.get('cad_conversion_rate'),
+    ))
 
     conn.commit()
     new_holding_id = cursor.lastrowid
@@ -583,6 +682,145 @@ def get_account_type_history_hourly(hours=168):
             history_by_account[account_type] = history[-hours:]
 
     return history_by_account
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def add_portfolio_snapshot(stats: dict, captured_at: datetime | None = None, user_id: str = 'default'):
+    """Persist a portfolio-level aggregate snapshot for later movement calculations."""
+    captured_at = _ensure_utc(captured_at or datetime.utcnow())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO portfolio_snapshots (user_id, captured_at, total_value, total_contribution, total_gain, total_gain_percent)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        user_id,
+        captured_at.replace(microsecond=0).isoformat(),
+        float(stats.get('total_value', 0)),
+        float(stats.get('total_cost') if stats.get('total_cost') is not None else stats.get('total_contribution', 0)),
+        float(stats.get('total_gain', 0)),
+        float(stats.get('total_gain_percent', 0)),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_portfolio_snapshots_since(start_time: datetime | None = None, user_id: str = 'default') -> list[dict]:
+    """Get all portfolio snapshots since a given datetime for a specific user"""
+    conn = get_db()
+    cursor = conn.cursor()
+    if start_time:
+        cursor.execute('''
+            SELECT * FROM portfolio_snapshots
+            WHERE user_id = ? AND captured_at >= ?
+            ORDER BY captured_at ASC
+        ''', (user_id, start_time.isoformat()))
+    else:
+        cursor.execute('''
+            SELECT * FROM portfolio_snapshots
+            WHERE user_id = ?
+            ORDER BY captured_at ASC
+        ''', (user_id,))
+    snapshots = cursor.fetchall()
+    conn.close()
+    return snapshots
+
+
+def get_portfolio_snapshot_before(before: datetime, user_id: str = 'default'):
+    """Get the latest portfolio snapshot before a given datetime for a specific user"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM portfolio_snapshots
+        WHERE user_id = ? AND captured_at <= ?
+        ORDER BY captured_at DESC
+        LIMIT 1
+    ''', (user_id, before.isoformat()))
+    snapshot = cursor.fetchone()
+    conn.close()
+    return snapshot
+
+
+def get_latest_portfolio_snapshot(user_id: str = 'default'):
+    """Get the latest portfolio snapshot for a specific user"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM portfolio_snapshots
+        WHERE user_id = ?
+        ORDER BY captured_at DESC
+        LIMIT 1
+    ''', (user_id,))
+    snapshot = cursor.fetchone()
+    conn.close()
+    return dict(snapshot) if snapshot else None
+
+
+def get_price_history(ticker: str, days: int = 30):
+    """Get price history for a specific ticker (shared across users)"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT date, price
+        FROM price_history
+        WHERE ticker = ?
+        ORDER BY date DESC
+        LIMIT ?
+    ''', (ticker, days))
+    history = cursor.fetchall()
+    conn.close()
+    return history
+
+
+def get_price_history_hourly(ticker: str, hours: int = 168):
+    """Get hourly price history for a specific ticker (shared across users)"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT timestamp, price
+        FROM price_history_hourly
+        WHERE ticker = ?
+        ORDER BY timestamp ASC
+        LIMIT ?
+    ''', (ticker, hours))
+    history = cursor.fetchall()
+    conn.close()
+    return history
+
+
+# User info CRUD
+def get_all_users():
+    """Get all users from the user_info table."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM user_info ORDER BY created_at ASC')
+    users = cursor.fetchall()
+    conn.close()
+    return [dict(u) for u in users]
+
+def get_user_by_id(user_id: str):
+    """Get a user by user_id."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM user_info WHERE user_id = ?', (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    return dict(user) if user else None
+
+def create_user(user_id: str, display_name: str, email: str | None = None):
+    """Create a new user."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO user_info (user_id, display_name, email) VALUES (?, ?, ?)',
+                   (user_id, display_name, email))
+    conn.commit()
+    conn.close()
+    return get_user_by_id(user_id)
 
 if __name__ == '__main__':
     # Initialize database if run directly

@@ -11,9 +11,13 @@ interface HoldingsTableProps {
   accountFilter: string;
   accountFilterOptions: string[];
   onAccountFilterChange: (value: string) => void;
+  onAccountExclusionToggle: (value: string) => void;
+  excludedAccounts: string[];
   categoryFilter: string;
   categoryFilterOptions: string[];
   onCategoryFilterChange: (value: string) => void;
+  onCategoryExclusionToggle: (value: string) => void;
+  excludedCategories: string[];
 }
 
 export default function HoldingsTable({
@@ -24,9 +28,13 @@ export default function HoldingsTable({
   accountFilter,
   accountFilterOptions,
   onAccountFilterChange,
+  onAccountExclusionToggle,
+  excludedAccounts,
   categoryFilter,
   categoryFilterOptions,
   onCategoryFilterChange,
+  onCategoryExclusionToggle,
+  excludedCategories,
 }: HoldingsTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'account_type', direction: 'asc' });
@@ -142,11 +150,15 @@ export default function HoldingsTable({
                 key={option}
                 type="button"
                 onClick={() => onAccountFilterChange(option)}
+                onDoubleClick={() => onAccountExclusionToggle(option)}
                 className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
                   accountFilter === option
                     ? 'bg-soft-dark text-white shadow-soft'
-                    : 'bg-soft-light text-soft-secondary hover:text-soft-dark'
+                    : excludedAccounts.includes(option)
+                      ? 'bg-soft-light/70 text-soft-secondary line-through'
+                      : 'bg-soft-light text-soft-secondary hover:text-soft-dark'
                 }`}
+                title="Click to focus, double-click to exclude"
               >
                 {option}
               </button>
@@ -159,11 +171,15 @@ export default function HoldingsTable({
                 key={option}
                 type="button"
                 onClick={() => onCategoryFilterChange(option)}
+                onDoubleClick={() => onCategoryExclusionToggle(option)}
                 className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
                   categoryFilter === option
                     ? 'bg-soft-primary text-white shadow-soft'
-                    : 'bg-soft-light text-soft-secondary hover:text-soft-dark'
+                    : excludedCategories.includes(option)
+                      ? 'bg-soft-light/70 text-soft-secondary line-through'
+                      : 'bg-soft-light text-soft-secondary hover:text-soft-dark'
                 }`}
+                title="Click to focus, double-click to exclude"
               >
                 {option}
               </button>
