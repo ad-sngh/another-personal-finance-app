@@ -121,9 +121,15 @@ export const holdingsAPI = {
   getPriceHistory: (ticker: string, days: number = 30) => 
     api.get<{ ticker: string; history: PriceHistory[] }>(`/api/price-history/${ticker}?days=${days}`),
   capturePrices: () => api.post('/api/capture-prices'),
-  getPortfolioHistory: (days: number = 30) =>
+  getPortfolioHistory: (days: number = 30, userId?: string) =>
     api.get<{ history: PortfolioHistoryPoint[]; account_type_history: Record<string, PortfolioHistoryPoint[]> }>(
-      `/api/portfolio-history?days=${days}`,
+      '/api/portfolio-history',
+      {
+        params: {
+          days,
+          ...(userId ? { user_id: userId } : undefined),
+        },
+      },
     ),
   getPortfolioByAccountType: () => api.get<{ account_types: AccountTypeStat[] }>('/api/portfolio-by-account-type'),
   getMarketSummary: () => api.get<{ indexes: MarketIndexSummary[] }>('/api/market-summary'),

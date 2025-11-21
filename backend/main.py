@@ -382,16 +382,19 @@ async def api_get_price_history(ticker: str, days: int = 30):
 async def api_get_portfolio_history(
     days: int = 30,
     hours: int = 168,
-    granularity: Literal['day', 'hour'] = 'day'
+    granularity: Literal['day', 'hour'] = 'day',
+    user_id: Optional[str] = None,
 ):
     """Get portfolio value history"""
+    if user_id is None:
+        user_id = DEFAULT_USER_ID
     try:
         if granularity == 'hour':
-            history = get_portfolio_history_hourly(hours)
-            account_history = get_account_type_history_hourly(hours)
+            history = get_portfolio_history_hourly(hours, user_id)
+            account_history = get_account_type_history_hourly(hours, user_id)
         else:
-            history = get_portfolio_history(days)
-            account_history = get_account_type_history(days)
+            history = get_portfolio_history(days, user_id)
+            account_history = get_account_type_history(days, user_id)
         return {
             "history": history,
             "account_type_history": account_history,
@@ -479,12 +482,12 @@ MOVEMENT_RANGE_WINDOWS = {
 
 
 def _resolve_range_start(range_key: str) -> datetime | None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     key = range_key.lower()
     if key in MOVEMENT_RANGE_WINDOWS:
         return now - MOVEMENT_RANGE_WINDOWS[key]
     if key == 'ytd':
-        return datetime(now.year, 1, 1)
+        return datetime(now.year, 1, 1, tzinfo=timezone.utc)
     if key == 'all':
         return None
     return now - MOVEMENT_RANGE_WINDOWS['7d']
@@ -519,6 +522,8 @@ async def api_portfolio_movement(range: str = '7d', user_id: Optional[str] = Non
     baseline_snapshot = snapshots_for_points[0]
     if start_time:
         first_snapshot_time = datetime.fromisoformat(baseline_snapshot['captured_at'])
+        if first_snapshot_time.tzinfo is None:
+            first_snapshot_time = first_snapshot_time.replace(tzinfo=timezone.utc)
         if first_snapshot_time > start_time:
             prior_snapshot = get_portfolio_snapshot_before(start_time, user_id)
             if prior_snapshot:
@@ -531,9 +536,10 @@ async def api_portfolio_movement(range: str = '7d', user_id: Optional[str] = Non
     if not snapshots_for_points or snapshots_for_points[-1]['captured_at'] != current_point['captured_at']:
         snapshots_for_points.append(current_point)
 
-    previous_value = float(baseline_snapshot['total_value'])
-    change = current_value - previous_value
-    change_percent = (change / previous_value * 100) if previous_value else None
+    contribution_value = float(current_stats.get('total_cost', 0))
+    previous_value = contribution_value
+    change = current_value - contribution_value
+    change_percent = (change / contribution_value * 100) if contribution_value else None
 
     return {
         "current_value": current_value,
