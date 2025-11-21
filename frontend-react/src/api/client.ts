@@ -71,16 +71,48 @@ export interface MarketIndexSummary {
   change_percent: number | null;
 }
 
+export type MovementRangeOption = '7d' | '1m' | '3m' | 'ytd' | 'all';
+
+export interface PortfolioMovementPoint {
+  timestamp: string;
+  value: number;
+}
+
 export interface PortfolioMovementSnapshot {
   current_value: number;
   previous_value: number;
   change: number;
   change_percent: number | null;
   since: string;
+  last_updated_at: string;
+  range: MovementRangeOption;
+  points?: PortfolioMovementPoint[];
 }
 
+export interface PortfolioStatsResponse {
+  total_value: number;
+  total_cost: number;
+  total_gain: number;
+  total_gain_percent: number;
+  holdings_count: number;
+}
+
+export interface User {
+  user_id: string;
+  display_name: string;
+  email?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export const usersAPI = {
+  getAll: () => api.get<{ users: User[] }>('/api/users'),
+};
+
 export const holdingsAPI = {
-  getAll: () => api.get<{ holdings: Holding[] }>('/api/holdings'),
+  getAll: (userId?: string) => api.get<{ holdings: Holding[]; stats: PortfolioStatsResponse; user_id: string }>('/api/holdings', {
+    params: userId ? { user_id: userId } : undefined,
+  }),
   getById: (id: string) => api.get<Holding>(`/api/holdings/${id}`),
   create: (data: HoldingPayload) => api.post('/api/holdings', data),
   update: (id: string, data: HoldingPayload) => api.put(`/api/holdings/${id}`, data),
@@ -95,5 +127,8 @@ export const holdingsAPI = {
     ),
   getPortfolioByAccountType: () => api.get<{ account_types: AccountTypeStat[] }>('/api/portfolio-by-account-type'),
   getMarketSummary: () => api.get<{ indexes: MarketIndexSummary[] }>('/api/market-summary'),
-  getPortfolioMovement: () => api.get<PortfolioMovementSnapshot>('/api/portfolio-movement'),
+  getPortfolioMovement: (range?: MovementRangeOption, userId?: string) =>
+    api.get<PortfolioMovementSnapshot>('/api/portfolio-movement', {
+      params: { ...(range ? { range } : undefined), ...(userId ? { user_id: userId } : undefined) },
+    }),
 };

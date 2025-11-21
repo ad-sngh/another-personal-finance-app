@@ -11,6 +11,7 @@ from database import (
     get_db,
     init_db,
     get_all_holdings,
+    get_all_holdings_for_user,
     get_holding_by_id,
     create_holding,
     update_holding,
@@ -23,17 +24,26 @@ from database import (
     get_account_type_history,
     get_portfolio_history_hourly,
     get_account_type_history_hourly,
+    add_portfolio_snapshot,
+    get_portfolio_snapshots_since,
+    get_portfolio_snapshot_before,
+    get_latest_portfolio_snapshot,
+    get_all_users,
+    get_user_by_id,
+    create_user,
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 
 MARKET_INDEXES: List[Dict[str, str]] = [
     {"id": "sp500", "symbol": "^GSPC", "name": "S&P 500"},
     {"id": "dow", "symbol": "^DJI", "name": "Dow Jones"},
     {"id": "nasdaq", "symbol": "^IXIC", "name": "Nasdaq"},
 ]
+
+DEFAULT_USER_ID = 'default'
 
 app = FastAPI(title="Portfolio Tracker", description="A simple web application to track investment holdings")
 
@@ -112,7 +122,7 @@ def capture_portfolio_prices():
     print(f"[{datetime.now()}] Starting portfolio price capture...")
     
     try:
-        holdings = get_all_holdings()
+        holdings = [dict(row) for row in get_all_holdings()]
         captured_count = 0
         
         for holding in holdings:
@@ -127,6 +137,10 @@ def capture_portfolio_prices():
                 else:
                     print(f"Failed to fetch price for {holding['ticker']}")
         
+        latest_holdings = [dict(row) for row in get_all_holdings()]
+        _, portfolio_stats = enrich_holdings_with_calculations(latest_holdings)
+        add_portfolio_snapshot(portfolio_stats, captured_at=datetime.utcnow(), user_id=DEFAULT_USER_ID)
+
         print(f"Price capture completed. Captured {captured_count} prices.")
         
     except Exception as e:
@@ -277,15 +291,24 @@ async def edit_existing(request: Request, holding_id: int):
 
 # API Routes
 @app.get("/api/holdings")
-async def api_get_holdings():
-    """Get all holdings with calculations"""
-    holdings = [dict(row) for row in get_all_holdings()]
+async def api_get_holdings(user_id: Optional[str] = None):
+    """Get all holdings with calculations, optionally scoped to a user."""
+    if user_id is None:
+        user_id = DEFAULT_USER_ID
+    holdings = [dict(row) for row in get_all_holdings_for_user(user_id)]
     enriched_holdings, portfolio_stats = enrich_holdings_with_calculations(holdings)
     
     return {
         "holdings": enriched_holdings,
-        "stats": portfolio_stats
+        "stats": portfolio_stats,
+        "user_id": user_id,
     }
+
+@app.get("/api/users")
+async def api_get_users():
+    """List all available users for switching."""
+    users = get_all_users()
+    return {"users": users}
 
 @app.post("/api/holdings")
 async def api_create_holding(holding: HoldingCreate):
@@ -448,23 +471,82 @@ async def api_market_summary():
 
     return {"indexes": summary}
 
-@app.get("/api/portfolio-movement")
-async def api_portfolio_movement(days: int = 2):
-    history = get_portfolio_history(max(days, 2))
-    if not history:
-        raise HTTPException(status_code=404, detail="Portfolio history unavailable")
+MOVEMENT_RANGE_WINDOWS = {
+    '7d': timedelta(days=7),
+    '1m': timedelta(days=30),
+    '3m': timedelta(days=90),
+}
 
-    latest = history[-1]
-    prior = history[-2] if len(history) >= 2 else history[0]
-    change = latest['value'] - prior['value']
-    change_percent = (change / prior['value'] * 100) if prior['value'] else None
+
+def _resolve_range_start(range_key: str) -> datetime | None:
+    now = datetime.utcnow()
+    key = range_key.lower()
+    if key in MOVEMENT_RANGE_WINDOWS:
+        return now - MOVEMENT_RANGE_WINDOWS[key]
+    if key == 'ytd':
+        return datetime(now.year, 1, 1)
+    if key == 'all':
+        return None
+    return now - MOVEMENT_RANGE_WINDOWS['7d']
+
+
+@app.get("/api/portfolio-movement")
+async def api_portfolio_movement(range: str = '7d', user_id: Optional[str] = None):
+    if user_id is None:
+        user_id = DEFAULT_USER_ID
+    range_key = (range or '7d').lower()
+    start_time = _resolve_range_start(range_key)
+    snapshots = get_portfolio_snapshots_since(start_time, user_id)
+
+    if not snapshots:
+        latest_snapshot = get_latest_portfolio_snapshot(user_id)
+        if latest_snapshot:
+            snapshots = [latest_snapshot]
+
+    holdings_rows = [dict(row) for row in get_all_holdings_for_user(user_id)]
+    _, current_stats = enrich_holdings_with_calculations(holdings_rows)
+    current_value = float(current_stats.get('total_value', 0))
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc, microsecond=0)
+    current_point = {
+        'captured_at': now_utc.isoformat(),
+        'total_value': current_value,
+    }
+
+    snapshots_for_points = list(snapshots)
+    if not snapshots_for_points:
+        snapshots_for_points.append(current_point)
+
+    baseline_snapshot = snapshots_for_points[0]
+    if start_time:
+        first_snapshot_time = datetime.fromisoformat(baseline_snapshot['captured_at'])
+        if first_snapshot_time > start_time:
+            prior_snapshot = get_portfolio_snapshot_before(start_time, user_id)
+            if prior_snapshot:
+                baseline_snapshot = prior_snapshot
+                snapshots_for_points.insert(0, prior_snapshot)
+
+    latest_snapshot = snapshots_for_points[-1]
+    snapshot_last_updated_at = latest_snapshot['captured_at'] if snapshots else current_point['captured_at']
+
+    if not snapshots_for_points or snapshots_for_points[-1]['captured_at'] != current_point['captured_at']:
+        snapshots_for_points.append(current_point)
+
+    previous_value = float(baseline_snapshot['total_value'])
+    change = current_value - previous_value
+    change_percent = (change / previous_value * 100) if previous_value else None
 
     return {
-        "current_value": latest['value'],
-        "previous_value": prior['value'],
+        "current_value": current_value,
+        "previous_value": previous_value,
         "change": change,
         "change_percent": change_percent,
-        "since": prior['date'],
+        "points": [
+            {"timestamp": snap['captured_at'], "value": float(snap['total_value'])}
+            for snap in snapshots_for_points
+        ],
+        "last_updated_at": snapshot_last_updated_at,
+        "user_id": user_id,
+        "range": range_key,
     }
 
 @app.get("/api/scheduler-status")
