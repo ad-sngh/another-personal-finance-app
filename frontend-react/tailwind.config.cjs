@@ -5,50 +5,27 @@ module.exports = {
     "./src/**/*.{js,ts,jsx,tsx,css}",
   ],
   theme: {
-    colors: {
-      transparent: 'transparent',
-      current: 'currentColor',
-      black: '#000',
-      white: '#fff',
-      primary: {
-        50: '#eff6ff',
-        100: '#dbeafe',
-        500: '#3b82f6',
-        600: '#2563eb',
-        700: '#1d4ed8',
-      },
-      gray: {
-        50: '#f9fafb',
-        100: '#f3f4f6',
-        200: '#e5e7eb',
-        500: '#6b7280',
-        600: '#4b5563',
-        700: '#374151',
-        900: '#111827',
-      },
-      blue: {
-        50: '#eff6ff',
-        100: '#dbeafe',
-        500: '#3b82f6',
-        600: '#2563eb',
-        700: '#1d4ed8',
-      },
-      green: {
-        600: '#16a34a',
-      },
-      red: {
-        600: '#dc2626',
-      },
-      indigo: {
-        50: '#eef2ff',
-        100: '#e0e7ff',
-        600: '#4f46e5',
-        700: '#4338ca',
-      },
-    },
     extend: {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
+      colors: {
+        'soft-primary': '#3b82f6',
+        'soft-secondary': '#6b7280',
+        'soft-light': '#f8f9fa',
+        'soft-dark': '#344767',
+        'soft-white': '#ffffff',
+        'soft-background': '#f0f2f5',
+        'soft-success': '#4caf50',
+        'soft-danger': '#f44336',
+        'soft-warning': '#fb8c00',
+        'soft-info': '#03a9f4',
+      },
+      boxShadow: {
+        soft: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+        'soft-lg': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+        'soft-xl': '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+        'soft-inner': 'inset 0 2px 4px 0 rgba(0, 0, 0, 0.06)',
       },
     },
   },

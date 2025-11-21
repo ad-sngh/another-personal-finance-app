@@ -23,3 +23,12 @@ export const formatCurrency = (
 export const formatPercentage = (value?: number | null): string => {
   return `${formatNumber(value)}%`;
 };
+
+export const formatSignedPercentage = (value?: number | null): string => {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    return '+0.0%';
+  }
+  const formatted = formatNumber(Math.abs(value));
+  const sign = value >= 0 ? '+' : '-';
+  return `${sign}${formatted}%`;
+};
