@@ -37,6 +37,22 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS insights_current (
+            user_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            move TEXT,
+            sentiment TEXT,
+            captured_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, ticker),
+            FOREIGN KEY (user_id) REFERENCES user_info(user_id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_insights_user
+        ON insights_current(user_id, captured_at)
+    ''')
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS holdings (
@@ -55,6 +71,7 @@ def init_db():
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             is_deleted BOOLEAN DEFAULT FALSE,  -- Soft delete support
             track_price BOOLEAN DEFAULT TRUE,
+            track_insights BOOLEAN DEFAULT FALSE,
             manual_price_override BOOLEAN DEFAULT FALSE,
             value_override REAL,
             convert_to_cad BOOLEAN DEFAULT FALSE,
@@ -102,6 +119,9 @@ def init_db():
     if 'track_price' not in columns:
         cursor.execute('ALTER TABLE holdings ADD COLUMN track_price BOOLEAN DEFAULT TRUE')
         cursor.execute('UPDATE holdings SET track_price = TRUE WHERE track_price IS NULL')
+    if 'track_insights' not in columns:
+        cursor.execute('ALTER TABLE holdings ADD COLUMN track_insights BOOLEAN DEFAULT FALSE')
+        cursor.execute('UPDATE holdings SET track_insights = FALSE WHERE track_insights IS NULL')
     if 'manual_price_override' not in columns:
         cursor.execute('ALTER TABLE holdings ADD COLUMN manual_price_override BOOLEAN DEFAULT FALSE')
         cursor.execute('UPDATE holdings SET manual_price_override = FALSE WHERE manual_price_override IS NULL')
@@ -344,8 +364,8 @@ def create_holding(data):
 
     cursor.execute('''
         INSERT INTO holdings (holding_id, account_type, account, ticker, name, category, 
-                            lookup, shares, cost, current_price, contribution, track_price, manual_price_override, value_override, convert_to_cad, cad_conversion_rate)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            lookup, shares, cost, current_price, contribution, track_price, track_insights, manual_price_override, value_override, convert_to_cad, cad_conversion_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         holding_id,
         data['account_type'],
@@ -359,6 +379,7 @@ def create_holding(data):
         data['current_price'],
         contribution,
         track_price,
+        bool(data.get('track_insights', False)),
         manual_price_override,
         data.get('value_override'),
         bool(data.get('convert_to_cad', False)),
@@ -404,8 +425,8 @@ def update_holding(id, data):
 
     cursor.execute('''
         INSERT INTO holdings (holding_id, account_type, account, ticker, name, category, 
-                            lookup, shares, cost, current_price, contribution, track_price, manual_price_override, value_override, convert_to_cad, cad_conversion_rate)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            lookup, shares, cost, current_price, contribution, track_price, track_insights, manual_price_override, value_override, convert_to_cad, cad_conversion_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         holding_id,
         data['account_type'],
@@ -419,6 +440,7 @@ def update_holding(id, data):
         data['current_price'],
         contribution,
         track_price,
+        bool(data.get('track_insights', False)),
         manual_price_override,
         data.get('value_override'),
         bool(data.get('convert_to_cad', False)),
