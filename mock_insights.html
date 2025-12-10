@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Portfolio Tracker – Mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  body { font-family: 'Inter', sans-serif; margin: 0; padding: 32px; background: #f5f7fb; color: #111827; }
+  h1 { margin-bottom: 8px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 2fr) 360px; gap: 24px; }
+  .table-shell { background: #fff; border-radius: 20px; padding: 16px; box-shadow: 0 14px 35px rgba(15, 23, 42, 0.08); }
+  .table-shell img { width: 100%; border-radius: 12px; display: block; box-shadow: inset 0 0 0 1px #e2e8f0; }
+  .table-note { margin-top: 12px; font-size: 13px; color: #64748b; }
+  .insights-panel { background: #fff; border-radius: 20px; padding: 24px; box-shadow: 0 14px 35px rgba(15, 23, 42, 0.12); }
+  .insight-card { border-left: 4px solid #2563eb; padding-left: 16px; margin-bottom: 18px; }
+  .insight-card:last-child { margin-bottom: 0; }
+  .insight-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .ticker { font-size: 16px; font-weight: 700; letter-spacing: 0.08em; color: #1e3a8a; }
+  .move { font-size: 14px; font-weight: 600; }
+  .move.up { color: #059669; }
+  .move.down { color: #dc2626; }
+  .summary { font-size: 14px; color: #334155; line-height: 1.4; }
+  .timestamp { margin-top: 6px; font-size: 12px; color: #94a3b8; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Portfolio Positions – Alex Chen</h1>
+    <p>Total Value: $384,200 · Gain: +$42,900 (12.6%)</p>
+  </header>
+
+  <div class="layout">
+    <!-- Existing holdings table reference -->
+    <div class="table-shell">
+      <img src="mockups/Screenshot%202025-11-27%20at%209.49.42%E2%80%AFAM.png" alt="Portfolio Positions table" />
+      <p class="table-note">
+        Direct capture from the production UI. The Stock Insights rail shown on the right lives alongside this existing table.
+      </p>
+    </div>
+
+    <!-- Stock Insights Panel -->
+    <aside class="insights-panel">
+      <h2 style="margin:0 0 16px;">Stock Insights</h2>
+
+      <div class="insight-card">
+        <div class="insight-header">
+          <span class="ticker">NVDA</span>
+          <span class="move up">+4.3% today</span>
+        </div>
+        <p class="summary">
+          Nvidia spiked after Morgan Stanley raised its price target on expectations that Blackwell GPUs ship earlier than planned. Supply chain checks point to upside in Q1 data-center revenue.
+        </p>
+        <div class="timestamp">Last updated 10:12 AM</div>
+      </div>
+
+      <div class="insight-card">
+        <div class="insight-header">
+          <span class="ticker">TSLA</span>
+          <span class="move down">−2.1% today</span>
+        </div>
+        <p class="summary">
+          Shares dipped as EU regulators opened a probe into FSD marketing claims. UBS also trimmed FY26 delivery estimates citing slower Cybertruck ramp.
+        </p>
+        <div class="timestamp">Last updated 9:48 AM</div>
+      </div>
+
+      <div class="insight-card">
+        <div class="insight-header">
+          <span class="ticker">AAPL</span>
+          <span class="move up">+1.6% today</span>
+        </div>
+        <p class="summary">
+          Apple is trading higher after Bloomberg reported Vision Pro 2 production orders doubling for the holidays. Wedbush reiterated outperform with a $250 target.
+        </p>
+        <div class="timestamp">Last updated 9:15 AM</div>
+      </div>
+
+      <div class="insight-card">
+        <div class="insight-header">
+          <span class="ticker">MSFT</span>
+          <span class="move up">+0.9% today</span>
+        </div>
+        <p class="summary">
+          Microsoft announced a multi-year AI partnership with Snowflake, helping Azure secure enterprise data workloads. JPMorgan highlighted incremental Azure growth.
+        </p>
+        <div class="timestamp">Last updated 8:55 AM</div>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

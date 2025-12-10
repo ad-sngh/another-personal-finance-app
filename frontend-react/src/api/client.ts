@@ -24,6 +24,7 @@ export interface Holding {
   contribution: number;
   value: number;
   track_price?: boolean;
+  track_insights?: boolean;
   price_source?: 'price_history' | 'holdings_table';
   manual_price_override?: boolean;
   value_override?: number | null;
@@ -41,6 +42,7 @@ export type HoldingPayload = {
   current_price: number;
   contribution?: number;
   track_price: boolean;
+  track_insights: boolean;
   manual_price_override?: boolean;
   value_override?: number | null;
 };
