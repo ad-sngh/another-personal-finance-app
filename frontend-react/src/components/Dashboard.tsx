@@ -4,6 +4,7 @@ import { holdingsAPI, usersAPI, Holding, HoldingPayload, MarketIndexSummary, Por
 import HoldingsTable from './HoldingsTable';
 import StatsCard from './StatsCard';
 import VisualizationsPanel from './VisualizationsPanel';
+import StockInsightsPanel from './StockInsightsPanel';
 import { formatCurrency, formatSignedPercentage } from '../utils/format';
 
 const ACCOUNT_TYPE_PRESETS = ['Taxable', 'TFSA', 'RRSP', 'RESP', 'Cash', 'Brokerage'];
@@ -43,6 +44,7 @@ export default function Dashboard() {
     cost: 0,
     current_price: 0,
     track_price: true,
+    track_insights: true,
   });
   const [modalError, setModalError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -313,6 +315,7 @@ export default function Dashboard() {
     current_price: 0,
     contribution: undefined,
     track_price: true,
+    track_insights: true,
     manual_price_override: false,
     value_override: undefined,
   }), []);
@@ -363,6 +366,7 @@ export default function Dashboard() {
     contribution: holding.contribution,
     track_price: holding.track_price ?? true,
     manual_price_override: holding.manual_price_override ?? false,
+    track_insights: holding.track_insights ?? holding.track_price ?? true,
     value_override: holding.value_override ?? undefined,
   });
 
@@ -509,6 +513,7 @@ export default function Dashboard() {
     setFormData(prev => ({
       ...prev,
       [name]: checked,
+      ...(name === 'track_price' ? { track_insights: checked } : {}),
     }));
   };
 
@@ -956,22 +961,27 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <HoldingsTable
-                  holdings={holdings}
-                  onEdit={openEditModal}
-                  onDelete={openDeleteModal}
-                  busyHoldingId={busyHoldingId}
-                  accountFilter={accountFilter}
-                  accountFilterOptions={accountFilterOptions}
-                  onAccountFilterChange={handleAccountFilterChange}
-                  onAccountExclusionToggle={toggleAccountExclusion}
-                  excludedAccounts={excludedAccounts}
-                  categoryFilter={categoryFilter}
-                  categoryFilterOptions={categoryFilterOptions}
-                  onCategoryFilterChange={handleCategoryFilterChange}
-                  onCategoryExclusionToggle={toggleCategoryExclusion}
-                  excludedCategories={excludedCategories}
-                />
+                <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.8fr)]">
+                  <HoldingsTable
+                    holdings={holdings}
+                    onEdit={openEditModal}
+                    onDelete={openDeleteModal}
+                    busyHoldingId={busyHoldingId}
+                    accountFilter={accountFilter}
+                    accountFilterOptions={accountFilterOptions}
+                    onAccountFilterChange={handleAccountFilterChange}
+                    onAccountExclusionToggle={toggleAccountExclusion}
+                    excludedAccounts={excludedAccounts}
+                    categoryFilter={categoryFilter}
+                    categoryFilterOptions={categoryFilterOptions}
+                    onCategoryFilterChange={handleCategoryFilterChange}
+                    onCategoryExclusionToggle={toggleCategoryExclusion}
+                    excludedCategories={excludedCategories}
+                  />
+                  <div className="hidden xl:block">
+                    <StockInsightsPanel />
+                  </div>
+                </div>
               </>
             ) : (
               <VisualizationsPanel holdings={holdings} userId={currentUserId} />
@@ -1214,7 +1224,7 @@ export default function Dashboard() {
                       disabled={isValueOverrideActive}
                     />
                     <span className="text-sm text-gray-700">
-                      Track this holding's price automatically using the lookup symbol. We'll add it to your price history if it isn't being tracked yet.
+                      Track this holding's price & insights automatically using the lookup symbol. We'll add it to your price history if it isn't being tracked yet.
                     </span>
                   </label>
                   <label className="md:col-span-2 flex items-center gap-3 rounded-xl border border-gray-200 px-4 py-3">

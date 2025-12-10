@@ -4,7 +4,7 @@
   "description": "Modern frontend for portfolio tracker with Alpine.js and Tailwind CSS",
   "main": "index.html",
   "scripts": {
-    "dev": "python -m http.server 3000 --directory .",
+    "dev": "python3 -m http.server 3000 --directory .",
     "build": "echo 'Static build - no build step required'",
     "preview": "python -m http.server 3001 --directory ."
   },
