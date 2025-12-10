@@ -76,6 +76,7 @@ class HoldingCreate(BaseModel):
     current_price: float
     contribution: Optional[float] = None  # Allow manual overrides
     track_price: bool = True
+    track_insights: bool = False
     manual_price_override: bool = False
     value_override: Optional[float] = None
 
