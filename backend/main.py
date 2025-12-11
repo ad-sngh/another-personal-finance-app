@@ -31,12 +31,17 @@ from database import (
     get_all_users,
     get_user_by_id,
     create_user,
+    upsert_current_insight,
+    get_current_insights,
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 from datetime import datetime, time, timedelta, timezone
+import json
 
+from agent_runner import run_insights_pipeline
+from agent_tools import get_stock_price_info
 MARKET_INDEXES: List[Dict[str, str]] = [
     {"id": "sp500", "symbol": "^GSPC", "name": "S&P 500"},
     {"id": "dow", "symbol": "^DJI", "name": "Dow Jones"},
@@ -97,6 +102,15 @@ class HoldingUpdate(BaseModel):
 
 class PriceRequest(BaseModel):
     ticker: str
+
+class InsightRunRequest(BaseModel):
+    symbol: str
+    current_price: Optional[float] = None
+    previous_close: Optional[float] = None
+    user_id: Optional[str] = None
+
+class InsightRefreshRequest(BaseModel):
+    user_id: Optional[str] = None
 
 def is_market_open() -> bool:
     """Check if market is open (weekdays 9AM-5PM EST)"""
@@ -162,6 +176,164 @@ def setup_scheduler():
         replace_existing=True
     )
     print("Scheduler setup complete. Price capture scheduled for weekdays 9:05 AM - 5:05 PM EST")
+
+    # Schedule daily insights refresh (default 7:30 AM EST, every day)
+    scheduler.add_job(
+        refresh_tracked_insights_job,
+        CronTrigger(
+            hour="7",
+            minute="30",
+            day_of_week="mon-sun",
+        ),
+        id="daily_insights_refresh",
+        name="Daily Insights Refresh",
+        replace_existing=True,
+    )
+    print("Scheduler setup complete. Insights refresh scheduled daily at 7:30 AM EST")
+
+
+def refresh_tracked_insights_for_user(user_id: str) -> dict:
+    """Run the insights pipeline for all holdings that track insights.
+    
+    If Ollama server is unavailable, preserves existing insights instead of failing.
+    Only tries once per ticker with proper timeout handling.
+    """
+    holdings = [dict(row) for row in get_all_holdings_for_user(user_id)]
+    refreshed: list[str] = []
+    errors: list[dict[str, str]] = []
+    ollama_unavailable = False
+
+    for holding in holdings:
+        if not holding.get("track_insights"):
+            continue
+        symbol = (holding.get("lookup") or holding.get("ticker") or "").strip()
+        if not symbol:
+            continue
+        
+        # If Ollama was previously detected as unavailable, skip further attempts
+        if ollama_unavailable:
+            errors.append({
+                "symbol": symbol, 
+                "error": "Skipped: Ollama server unavailable, preserving existing insight"
+            })
+            continue
+            
+        print(f"[{datetime.utcnow().isoformat()}] Processing insights for {symbol}...")
+        
+        try:
+            # Add timeout handling for price fetching
+            import signal
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Price fetch timeout")
+            
+            # Set a 30-second timeout for price fetching
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(30)
+            
+            try:
+                quote = get_stock_price_info(symbol)
+                print(f"[{datetime.utcnow().isoformat()}] {symbol}: Price fetched - Current: {quote.current_price}, Previous: {quote.previous_close}")
+            finally:
+                signal.alarm(0)  # Cancel the alarm
+            
+            # Run insights pipeline with timeout
+            signal.alarm(60)  # 60-second timeout for AI processing
+            
+            try:
+                result = run_insights_pipeline(symbol, quote.current_price, quote.previous_close or quote.current_price)
+                print(f"[{datetime.utcnow().isoformat()}] {symbol}: AI analysis completed")
+                print(f"[{datetime.utcnow().isoformat()}] {symbol}: Summary - {result['summary'][:100]}...")
+                _save_insight(user_id, symbol, result["summary"], result["analysis"])
+                refreshed.append(symbol.upper())
+                print(f"[{datetime.utcnow().isoformat()}] {symbol}: ✓ Insight saved successfully")
+            finally:
+                signal.alarm(0)  # Cancel the alarm
+                
+        except TimeoutError as exc:
+            print(f"[{datetime.utcnow().isoformat()}] {symbol}: ✗ Timeout - {str(exc)}")
+            errors.append({"symbol": symbol, "error": f"Timeout: {str(exc)}"})
+        except Exception as exc:
+            error_str = str(exc).lower()
+            print(f"[{datetime.utcnow().isoformat()}] {symbol}: ✗ Error - {str(exc)}")
+            
+            # Check for Ollama-specific connection errors
+            if any(keyword in error_str for keyword in [
+                "connection refused", 
+                "ollama", 
+                "127.0.0.1:11434",
+                "connection error",
+                "timeout",
+                "unreachable"
+            ]):
+                ollama_unavailable = True
+                errors.append({
+                    "symbol": symbol, 
+                    "error": "Ollama server unavailable - preserving existing insights for all remaining tickers"
+                })
+                print(f"[{datetime.utcnow().isoformat()}] Ollama server unavailable during insights refresh for {symbol}. Preserving existing insights.")
+            elif any(keyword in error_str for keyword in [
+                "delisted",
+                "no data found",
+                "no price data",
+                "symbol may be delisted"
+            ]):
+                errors.append({
+                    "symbol": symbol, 
+                    "error": "Ticker appears delisted or no data available"
+                })
+                print(f"[{datetime.utcnow().isoformat()}] {symbol}: Ticker appears delisted, skipping.")
+            else:
+                errors.append({"symbol": symbol, "error": str(exc)})
+
+    return {"user_id": user_id, "refreshed": refreshed, "errors": errors}
+
+
+def refresh_tracked_insights_job():
+    """Scheduler job to refresh insights daily.
+    
+    Includes fallback logic to preserve existing insights if Ollama is unavailable.
+    """
+    print(f"[{datetime.utcnow().isoformat()}] Starting scheduled insights refresh...")
+    try:
+        users = get_all_users()
+    except Exception as exc:
+        print(f"Failed to load users for insights refresh: {exc}")
+        return
+
+    if not users:
+        users = [{"user_id": DEFAULT_USER_ID}]
+
+    for user in users:
+        user_id = user.get("user_id") or DEFAULT_USER_ID
+        try:
+            result = refresh_tracked_insights_for_user(user_id)
+            refreshed = result.get("refreshed", [])
+            errors = result.get("errors", [])
+            
+            # Log summary
+            if refreshed:
+                print(f"Insights refresh for user {user_id}: {len(refreshed)} tickers updated successfully")
+            
+            if errors:
+                ollama_errors = [e for e in errors if "ollama" in e["error"].lower() or "preserving" in e["error"].lower()]
+                other_errors = [e for e in errors if e not in ollama_errors]
+                
+                if ollama_errors:
+                    print(f"Insights refresh for user {user_id}: Ollama server unavailable, preserved existing insights for {len(ollama_errors)} tickers")
+                
+                if other_errors:
+                    print(f"Insights refresh for user {user_id}: {len(other_errors)} other errors occurred")
+                    for error in other_errors[:3]:  # Log first 3 non-Ollama errors
+                        print(f"  - {error['symbol']}: {error['error']}")
+                    if len(other_errors) > 3:
+                        print(f"  ... and {len(other_errors) - 3} more errors")
+                        
+            if not refreshed and not errors:
+                print(f"Insights refresh for user {user_id}: No holdings with insight tracking found")
+                
+        except Exception as exc:
+            print(f"Failed to refresh insights for user {user_id}: {exc}")
 
 def fetch_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
     """Fetch current price and name for ticker using yfinance"""
@@ -598,3 +770,81 @@ if __name__ == "__main__":
         uvicorn.run("main:app", host=args.host, port=args.port, reload=True)
     else:
         uvicorn.run(app, host=args.host, port=args.port, reload=False)
+
+
+def _save_insight(user_id: str, symbol: str, summary: str, analysis: dict):
+    move_percent = analysis.get("move_percent")
+    move_text = None
+    if move_percent is not None:
+        move_text = f"{move_percent}%" if isinstance(move_percent, (int, float)) else str(move_percent)
+    sentiment = analysis.get("confidence")
+    analysis_json = json.dumps(analysis, ensure_ascii=False)
+    upsert_current_insight(user_id, symbol.upper(), summary, move_text, sentiment, analysis_json)
+
+
+@app.post("/api/insights/run")
+async def api_run_insight(payload: InsightRunRequest):
+    user_id = payload.user_id or DEFAULT_USER_ID
+    symbol = payload.symbol.upper().strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Symbol is required")
+
+    current_price = payload.current_price
+    previous_close = payload.previous_close
+
+    # Treat missing or zero / negative values as "fetch automatically"
+    if (current_price is None or current_price <= 0) or (previous_close is None or previous_close <= 0):
+        quote = get_stock_price_info(symbol)
+        if current_price is None or current_price <= 0:
+            current_price = quote.current_price
+        if previous_close is None or previous_close <= 0:
+            previous_close = quote.previous_close
+
+    if previous_close in (None, 0):
+        raise HTTPException(status_code=400, detail="Previous close price is required and must be non-zero")
+    if current_price is None:
+        raise HTTPException(status_code=400, detail="Current price is required")
+
+    try:
+        result = run_insights_pipeline(symbol, current_price, previous_close)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to run insights pipeline: {exc}") from exc
+
+    _save_insight(user_id, symbol, result["summary"], result["analysis"])
+    return {
+        "symbol": symbol,
+        "summary": result["summary"],
+        "analysis": result["analysis"],
+        "stored_for_user": user_id,
+    }
+
+
+@app.post("/api/insights/refresh")
+async def api_refresh_insights(payload: InsightRefreshRequest):
+    user_id = payload.user_id or DEFAULT_USER_ID
+    holdings = [dict(row) for row in get_all_holdings_for_user(user_id)]
+    refreshed = []
+    errors: list[dict[str, str]] = []
+
+    for holding in holdings:
+        if not holding.get("track_insights"):
+            continue
+        symbol = (holding.get("lookup") or holding.get("ticker") or "").strip()
+        if not symbol:
+            continue
+        try:
+            quote = get_stock_price_info(symbol)
+            result = run_insights_pipeline(symbol, quote.current_price, quote.previous_close or quote.current_price)
+            _save_insight(user_id, symbol, result["summary"], result["analysis"])
+            refreshed.append(symbol.upper())
+        except Exception as exc:
+            errors.append({"symbol": symbol, "error": str(exc)})
+
+    return {"user_id": user_id, "refreshed": refreshed, "errors": errors}
+
+
+@app.get("/api/insights")
+async def api_get_insights(user_id: Optional[str] = None):
+    resolved_user = user_id or DEFAULT_USER_ID
+    insights = get_current_insights(resolved_user)
+    return {"user_id": resolved_user, "insights": insights}

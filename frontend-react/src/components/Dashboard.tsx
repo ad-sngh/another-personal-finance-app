@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, type ComponentType } from 'react';
 import { TrendingUp, TrendingDown, X, AlertTriangle, Menu, LayoutDashboard, BarChart3, Users } from 'lucide-react';
-import { holdingsAPI, usersAPI, Holding, HoldingPayload, MarketIndexSummary, PortfolioMovementSnapshot, MovementRangeOption, User } from '../api/client';
+import { holdingsAPI, usersAPI, insightsAPI, Holding, HoldingPayload, MarketIndexSummary, PortfolioMovementSnapshot, MovementRangeOption, User, Insight } from '../api/client';
 import HoldingsTable from './HoldingsTable';
 import StatsCard from './StatsCard';
 import VisualizationsPanel from './VisualizationsPanel';
@@ -65,6 +65,9 @@ export default function Dashboard() {
   const [marketError, setMarketError] = useState<string | null>(null);
   const [movementLoading, setMovementLoading] = useState(true);
   const [movementError, setMovementError] = useState<string | null>(null);
+  const [insights, setInsights] = useState<Insight[]>([]);
+  const [insightsLoading, setInsightsLoading] = useState(true);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
   const accountFilterOptions = useMemo(() => ['All', ...Array.from(new Set(holdings.map(h => h.account_type).filter(Boolean)))], [holdings]);
   const categoryFilterOptions = useMemo(() => ['All', ...Array.from(new Set(holdings.map(h => h.category).filter(Boolean)))], [holdings]);
 
@@ -296,11 +299,13 @@ export default function Dashboard() {
     loadUsers();
     loadHoldings();
     loadMarketContext();
+    loadInsights();
   }, []);
 
   useEffect(() => {
     loadHoldings();
     loadPortfolioMovement(movementRange);
+    loadInsights();
   }, [currentUserId]);
 
   const defaultPayload = useMemo<HoldingPayload>(() => ({
@@ -449,6 +454,20 @@ export default function Dashboard() {
       setMovementError('Unable to load movement data.');
     } finally {
       setMovementLoading(false);
+    }
+  }, [currentUserId]);
+
+  const loadInsights = useCallback(async () => {
+    setInsightsLoading(true);
+    setInsightsError(null);
+    try {
+      const response = await insightsAPI.getAll(currentUserId);
+      setInsights(response.data.insights);
+    } catch (error) {
+      console.error('Error loading insights:', error);
+      setInsightsError('Unable to load insights.');
+    } finally {
+      setInsightsLoading(false);
     }
   }, [currentUserId]);
 
@@ -961,7 +980,7 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.8fr)]">
+                <div className="grid gap-6 xl:grid-cols-[minmax(0,2.2fr)_minmax(250px,0.6fr)] xl:items-start">
                   <HoldingsTable
                     holdings={holdings}
                     onEdit={openEditModal}
@@ -979,7 +998,12 @@ export default function Dashboard() {
                     excludedCategories={excludedCategories}
                   />
                   <div className="hidden xl:block">
-                    <StockInsightsPanel />
+                    <StockInsightsPanel 
+                      insights={insights}
+                      loading={insightsLoading}
+                      error={insightsError}
+                      onRefresh={loadInsights}
+                    />
                   </div>
                 </div>
               </>

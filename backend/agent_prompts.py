@@ -17,14 +17,15 @@ WORKFLOW:
 OUTPUT FORMAT:
   Return valid JSON with the following shape (strings only, no markdown):
   {
-    "symbol": "AAPL",
-    "move_percent": "-2.4",
+    "symbol": "TICKER",
+    "move_percent": "ACTUAL_CALCULATED_PERCENT_CHANGE",
     "thesis": "Concise explanation of what happened and why it matters (<=400 chars).",
     "drivers": ["Driver 1", "Driver 2"],
     "confidence": "high|medium|low with short rationale",
     "sources": [{"title": "Source title", "url": "https://..."}],
     "risk_notes": "Optional risks, data gaps, or checkpoints."
   }
+  CRITICAL: Use the actual calculated move_percent from the price data, not example values.
   Every driver must be evidence-backed with a cited source. Be factual and specific.
 """
 

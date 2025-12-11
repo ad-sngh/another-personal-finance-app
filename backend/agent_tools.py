@@ -27,11 +27,34 @@ class NewsArticle:
 def get_stock_price_info(symbol: str) -> StockQuote:
     """
     Fetch the current price and previous close for a ticker using yfinance.
+    Falls back to historical data when fast_info fields are missing or zero.
     """
     ticker = yf.Ticker(symbol)
     info = ticker.fast_info
-    current_price = float(info.get("last_price") or info.get("lastClose") or 0)
-    previous_close = float(info.get("previous_close") or 0)
+    current_price = float(
+        info.get("last_price")
+        or info.get("lastClose")
+        or info.get("regular_market_price")
+        or info.get("regularMarketPrice")
+        or 0
+    )
+    previous_close = float(info.get("previous_close") or info.get("regular_market_previous_close") or 0)
+
+    if current_price <= 0 or previous_close <= 0:
+        hist = ticker.history(period="2d", interval="1d")
+        if not hist.empty and "Close" in hist:
+            closes = hist["Close"].dropna().tolist()
+            if closes:
+                current_price = float(closes[-1])
+                if len(closes) >= 2:
+                    previous_close = float(closes[-2])
+                elif previous_close <= 0:
+                    previous_close = current_price
+
+    if previous_close <= 0:
+        # Final fallback to avoid zero division later; use current price when no better data
+        previous_close = current_price
+
     return StockQuote(symbol=symbol.upper(), current_price=current_price, previous_close=previous_close)
 
 
