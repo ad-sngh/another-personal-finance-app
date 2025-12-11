@@ -121,13 +121,13 @@ export default function HoldingsTable({
   };
 
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-soft">
+    <div className="rounded-2xl bg-white p-4 shadow-soft">
       {/* Header */}
-      <div className="mb-5 space-y-3">
+      <div className="mb-4 space-y-2">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-soft-secondary font-semibold">Holdings</p>
-            <h2 className="text-xl md:text-2xl font-semibold text-soft-dark">Portfolio Positions</h2>
+            <p className="text-lg md:text-xl font-semibold text-soft-dark">Portfolio Positions</p>
           </div>
           <div className="text-[11px] uppercase tracking-wide text-soft-secondary">
             {filteredHoldings.length} / {holdings.length} holdings · {formatCurrency(totalFilteredValue)} value
@@ -139,7 +139,7 @@ export default function HoldingsTable({
             placeholder="Search by name or ticker..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-xl border border-soft-light px-4 py-2 text-sm text-soft-dark placeholder:text-soft-secondary focus:border-soft-primary focus:outline-none focus:ring-2 focus:ring-soft-primary/20"
+            className="w-full rounded-xl border border-soft-light px-3 py-1.5 text-sm text-soft-dark placeholder:text-soft-secondary focus:border-soft-primary focus:outline-none focus:ring-2 focus:ring-soft-primary/20"
           />
         </div>
         <div className="flex flex-col gap-2">
@@ -190,11 +190,11 @@ export default function HoldingsTable({
 
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-[11px]">
           <thead>
-            <tr className="border-b border-soft-light/70 text-[11px] uppercase tracking-wide text-soft-secondary">
+            <tr className="border-b border-soft-light/70 text-[10px] uppercase tracking-wide text-soft-secondary">
               {headerConfigs.map(({ label, key, align }) => (
-                <th key={key} className={`py-1.5 px-2 font-semibold text-${align}`}>
+                <th key={key} className={`py-1 px-1.5 font-semibold text-${align}`}>
                   <button
                     type="button"
                     onClick={() => handleSort(key)}
@@ -211,7 +211,7 @@ export default function HoldingsTable({
                   </button>
                 </th>
               ))}
-              <th className="text-right py-1.5 px-2 font-semibold text-[11px] uppercase text-soft-secondary">Actions</th>
+              <th className="text-right py-1 px-1.5 font-semibold text-[10px] uppercase text-soft-secondary">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -228,14 +228,14 @@ export default function HoldingsTable({
                   key={holding.id}
                   className={`border-b border-soft-light/60 text-[13px] transition-colors ${stripe} hover:bg-soft-primary/5 ${accentClass}`}
                 >
-                  <td className="py-1.5 px-2 whitespace-nowrap">
-                    <span className="px-2 py-0.5 rounded-full bg-soft-light text-[11px] font-semibold text-soft-secondary">
+                  <td className="py-1 px-1.5 whitespace-nowrap">
+                    <span className="px-1.5 py-0.5 rounded-full bg-soft-light text-[10px] font-semibold text-soft-secondary">
                       {holding.account_type}
                     </span>
                   </td>
-                  <td className="py-1.5 px-2 text-soft-dark max-w-[220px]" title={holding.name}>
-                    <div className="font-semibold truncate text-sm">{holding.name}</div>
-                    <div className="text-[11px] text-soft-secondary space-y-0.5">
+                  <td className="py-1 px-1.5 text-soft-dark max-w-[200px]" title={holding.name}>
+                    <div className="font-semibold truncate text-[13px]">{holding.name}</div>
+                    <div className="text-[10px] text-soft-secondary space-y-0.5">
                       <p className="truncate">{holding.account}</p>
                       <p className="flex items-center space-x-2">
                         <span>{holding.ticker || '—'}</span>
@@ -244,48 +244,48 @@ export default function HoldingsTable({
                       </p>
                     </div>
                   </td>
-                  <td className="py-1.5 px-2 text-right text-soft-secondary whitespace-nowrap">
+                  <td className="py-1 px-1.5 text-right text-soft-secondary whitespace-nowrap">
                     {formatNumber(holding.shares)}
                   </td>
-                  <td className="py-1.5 px-2 text-right font-semibold text-soft-dark whitespace-nowrap">
+                  <td className="py-1 px-1.5 text-right font-semibold text-soft-dark whitespace-nowrap">
                     {formatCurrency(holding.contribution)}
                   </td>
-                  <td className="py-1.5 px-2 text-right font-semibold text-soft-dark whitespace-nowrap" title={`Source: ${holding.price_source || 'portfolio'}`}>
+                  <td className="py-1 px-1.5 text-right font-semibold text-soft-dark whitespace-nowrap" title={`Source: ${holding.price_source || 'portfolio'}`}>
                     {formatCurrency(holding.current_price)}
                   </td>
-                  <td className="py-1.5 px-2 text-right font-semibold text-soft-dark whitespace-nowrap">
+                  <td className="py-1 px-1.5 text-right font-semibold text-soft-dark whitespace-nowrap">
                     {formatCurrency(holding.value)}
                   </td>
-                  <td className="py-1.5 px-2 text-right text-soft-secondary font-semibold whitespace-nowrap">
+                  <td className="py-1 px-1.5 text-right text-soft-secondary font-semibold whitespace-nowrap">
                     {totalFilteredValue > 0 ? `${allocation.toFixed(1)}%` : '—'}
                   </td>
-                  <td className="py-1.5 px-2 text-right">
-                    <div className={`inline-flex items-center justify-end gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                  <td className="py-1 px-1.5 text-right">
+                    <div className={`inline-flex items-center justify-end gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
                       isPositive ? 'bg-soft-success/10 text-soft-success' : 'bg-soft-danger/10 text-soft-danger'
                     }`}>
-                      {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                      {isPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
                       <span>{formatCurrency(Math.abs(gainLoss))}</span>
-                      <span className="text-xs">({formatNumber(gainLossPercent)}%)</span>
+                      <span className="text-[10px]">({formatNumber(gainLossPercent)}%)</span>
                     </div>
                   </td>
                   <td className="py-1.5 px-2">
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className="flex items-center justify-end gap-1">
                       <button
                         type="button"
                         onClick={() => onEdit(holding)}
-                        className="rounded-xl p-1.5 text-soft-primary hover:bg-soft-primary/10 transition"
+                        className="rounded-xl p-1 text-soft-primary hover:bg-soft-primary/10 transition"
                         aria-label={`Edit ${holding.name}`}
                       >
-                        <Edit2 className="w-4 h-4" />
+                        <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         type="button"
                         onClick={() => onDelete(holding)}
-                        className="rounded-xl p-1.5 text-soft-danger hover:bg-soft-danger/10 transition disabled:opacity-40"
+                        className="rounded-xl p-1 text-soft-danger hover:bg-soft-danger/10 transition disabled:opacity-40"
                         aria-label={`Delete ${holding.name}`}
                         disabled={busyHoldingId === holding.id}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </td>

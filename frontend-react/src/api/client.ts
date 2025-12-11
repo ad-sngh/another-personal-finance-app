@@ -9,6 +9,34 @@ export const api = axios.create({
   },
 });
 
+export interface Insight {
+  ticker: string;
+  summary: string;
+  move?: string | null;
+  sentiment?: string | null;
+  analysis_json?: string | null;
+  captured_at: string;
+}
+
+export interface InsightsResponse {
+  user_id: string;
+  insights: Insight[];
+}
+
+export interface RunInsightRequest {
+  symbol: string;
+  current_price?: number;
+  previous_close?: number;
+  user_id?: string;
+}
+
+export interface RunInsightResponse {
+  symbol: string;
+  summary: string;
+  analysis: Record<string, unknown>;
+  stored_for_user: string;
+}
+
 export interface Holding {
   id: number;
   holding_id: string;
@@ -139,4 +167,14 @@ export const holdingsAPI = {
     api.get<PortfolioMovementSnapshot>('/api/portfolio-movement', {
       params: { ...(range ? { range } : undefined), ...(userId ? { user_id: userId } : undefined) },
     }),
+};
+
+export const insightsAPI = {
+  getAll: (userId?: string) => api.get<InsightsResponse>('/api/insights', {
+    params: userId ? { user_id: userId } : undefined,
+  }),
+  run: (data: RunInsightRequest) => api.post<RunInsightResponse>('/api/insights/run', data),
+  refresh: (userId?: string) => api.post<{ user_id: string; refreshed: string[]; errors: Array<{ symbol: string; error: string }> }>('/api/insights/refresh', {
+    user_id: userId,
+  }),
 };

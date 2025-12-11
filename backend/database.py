@@ -1,3 +1,63 @@
+def upsert_current_insight(user_id: str, ticker: str, summary: str, move: str | None, sentiment: str | None, analysis_json: str | None):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO insights_current (user_id, ticker, summary, move, sentiment, analysis_json, captured_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, ticker) DO UPDATE SET
+            summary = excluded.summary,
+            move = excluded.move,
+            sentiment = excluded.sentiment,
+            analysis_json = excluded.analysis_json,
+            captured_at = excluded.captured_at
+    ''', (user_id, ticker, summary, move, sentiment, analysis_json))
+    conn.commit()
+    conn.close()
+
+
+def upsert_current_insight(user_id: str, ticker: str, summary: str, move: str | None, sentiment: str | None, analysis_json: str | None):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO insights_current (user_id, ticker, summary, move, sentiment, analysis_json, captured_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, ticker) DO UPDATE SET
+            summary = excluded.summary,
+            move = excluded.move,
+            sentiment = excluded.sentiment,
+            analysis_json = excluded.analysis_json,
+            captured_at = excluded.captured_at
+    ''', (user_id, ticker, summary, move, sentiment, analysis_json))
+    conn.commit()
+    conn.close()
+
+
+def get_current_insights(user_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT ticker, summary, move, sentiment, analysis_json, captured_at
+        FROM insights_current
+        WHERE user_id = ?
+        ORDER BY captured_at DESC
+    ''', (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_current_insights(user_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT ticker, summary, move, sentiment, analysis_json, captured_at
+        FROM insights_current
+        WHERE user_id = ?
+        ORDER BY captured_at DESC
+    ''', (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 import sqlite3
 import os
 from datetime import datetime, timedelta, timezone
@@ -44,6 +104,7 @@ def init_db():
             summary TEXT NOT NULL,
             move TEXT,
             sentiment TEXT,
+            analysis_json TEXT,
             captured_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (user_id, ticker),
             FOREIGN KEY (user_id) REFERENCES user_info(user_id)
@@ -53,6 +114,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_insights_user
         ON insights_current(user_id, captured_at)
     ''')
+    cursor.execute('PRAGMA table_info(insights_current)')
+    insight_columns = [column[1] for column in cursor.fetchall()]
+    if 'analysis_json' not in insight_columns:
+        cursor.execute('ALTER TABLE insights_current ADD COLUMN analysis_json TEXT')
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS holdings (
@@ -71,7 +136,7 @@ def init_db():
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             is_deleted BOOLEAN DEFAULT FALSE,  -- Soft delete support
             track_price BOOLEAN DEFAULT TRUE,
-            track_insights BOOLEAN DEFAULT FALSE,
+            track_insights BOOLEAN DEFAULT TRUE,
             manual_price_override BOOLEAN DEFAULT FALSE,
             value_override REAL,
             convert_to_cad BOOLEAN DEFAULT FALSE,
@@ -120,8 +185,11 @@ def init_db():
         cursor.execute('ALTER TABLE holdings ADD COLUMN track_price BOOLEAN DEFAULT TRUE')
         cursor.execute('UPDATE holdings SET track_price = TRUE WHERE track_price IS NULL')
     if 'track_insights' not in columns:
-        cursor.execute('ALTER TABLE holdings ADD COLUMN track_insights BOOLEAN DEFAULT FALSE')
-        cursor.execute('UPDATE holdings SET track_insights = FALSE WHERE track_insights IS NULL')
+        cursor.execute('ALTER TABLE holdings ADD COLUMN track_insights BOOLEAN DEFAULT TRUE')
+        cursor.execute('UPDATE holdings SET track_insights = TRUE WHERE track_insights IS NULL')
+    else:
+        # Update existing FALSE values to TRUE for better default behavior
+        cursor.execute('UPDATE holdings SET track_insights = TRUE WHERE track_insights = FALSE')
     if 'manual_price_override' not in columns:
         cursor.execute('ALTER TABLE holdings ADD COLUMN manual_price_override BOOLEAN DEFAULT FALSE')
         cursor.execute('UPDATE holdings SET manual_price_override = FALSE WHERE manual_price_override IS NULL')
