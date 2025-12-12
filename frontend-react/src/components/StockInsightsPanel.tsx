@@ -22,21 +22,6 @@ function getDirection(move?: string | null): 'up' | 'down' | 'flat' {
   return 'flat';
 }
 
-function formatMove(move?: string | null): string {
-  if (!move) return '0%';
-  const moveStr = move.toString().trim();
-  
-  // Remove percentage sign if present and parse as float
-  const numericValue = parseFloat(moveStr.replace('%', ''));
-  
-  if (isNaN(numericValue)) return moveStr;
-  
-  // Add + sign for positive values and ensure % sign
-  if (numericValue > 0) return `+${numericValue}%`;
-  if (numericValue < 0) return `${numericValue}%`;
-  return '0%';
-}
-
 function formatRelativeTime(isoString: string) {
   const target = new Date(isoString).getTime();
   if (Number.isNaN(target)) return 'moments ago';
@@ -48,6 +33,12 @@ function formatRelativeTime(isoString: string) {
   if (diffHours < 24) return `${diffHours} hr${diffHours === 1 ? '' : 's'} ago`;
   const diffDays = Math.round(diffHours / 24);
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+}
+
+function cleanSummary(ticker: string, summary?: string | null): string {
+  if (!summary) return '';
+  const pattern = new RegExp(`^${ticker}\\b\\s*`, 'i');
+  return summary.replace(pattern, '').trim();
 }
 
 export default function StockInsightsPanel({ insights, loading = false, error = null, onRefresh }: StockInsightsPanelProps) {
@@ -100,19 +91,18 @@ export default function StockInsightsPanel({ insights, loading = false, error = 
                       <Icon className={`h-3.5 w-3.5 ${meta.classes}`} />
                     </span>
                     <div className="rounded-2xl border border-soft-light/70 bg-white/80 px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-black uppercase tracking-wide text-soft-dark">{insight.ticker}</span>
-                          <span className="text-[10px] font-semibold text-soft-secondary">{formatMove(insight.move)}</span>
-                        </div>
-                        <span className="text-[10px] text-soft-secondary">
-                          {formatRelativeTime(insight.captured_at)}
-                        </span>
+                      <div className="flex items-start gap-2">
+                        <span className="text-[10px] font-black uppercase tracking-wide text-soft-dark">{insight.ticker}</span>
+                        <p className="text-[11px] text-soft-dark leading-relaxed flex-1">
+                          {cleanSummary(insight.ticker, insight.summary)}
+                        </p>
                       </div>
-                      <p className="mt-2 text-[11px] text-soft-dark leading-relaxed">{insight.summary}</p>
-                      {insight.sentiment && (
-                        <p className="mt-1 text-[10px] text-soft-secondary">Confidence: {insight.sentiment}</p>
-                      )}
+                      <div className="mt-1 flex items-center justify-between text-[10px] text-soft-secondary">
+                        <span>
+                          {insight.sentiment ? `Confidence: ${insight.sentiment}` : '\u00A0'}
+                        </span>
+                        <span>{formatRelativeTime(insight.captured_at)}</span>
+                      </div>
                     </div>
                   </li>
                 );

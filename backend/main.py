@@ -336,25 +336,51 @@ def refresh_tracked_insights_job():
             print(f"Failed to refresh insights for user {user_id}: {exc}")
 
 def fetch_price(ticker: str) -> tuple[Optional[float], Optional[str]]:
-    """Fetch current price and name for ticker using yfinance"""
-    if not ticker or ticker.strip() == '-':
+    """Fetch current price and name for ticker using yfinance with fast_info fallback."""
+    if not ticker or ticker.strip() == "-":
         return None, None
-    
+
     try:
         stock = yf.Ticker(ticker)
-        ticker_info = stock.info
-        
-        # Try different price fields
-        price = ticker_info.get('currentPrice')
-        if price is None:
-            price = ticker_info.get('regularMarketPrice')
-        if price is None:
-            price = ticker_info.get('previousClose')
-        
-        # Get the company name
-        name = ticker_info.get('longName') or ticker_info.get('shortName')
-        
-        return float(price) if price else None, name
+        price: Optional[float] = None
+        name: Optional[str] = None
+
+        fast_info = getattr(stock, "fast_info", {}) or {}
+        for key in (
+            "last_price",
+            "lastClose",
+            "regular_market_price",
+            "regularMarketPrice",
+            "previous_close",
+        ):
+            value = fast_info.get(key)
+            if value is not None:
+                price = float(value)
+                break
+
+        if not name:
+            name = fast_info.get("longName") or fast_info.get("shortName")
+
+        if price is None or price <= 0:
+            ticker_info = stock.info or {}
+            for key in ("currentPrice", "regularMarketPrice", "previousClose"):
+                value = ticker_info.get(key)
+                if value is not None:
+                    price = float(value)
+                    break
+            if not name:
+                name = ticker_info.get("longName") or ticker_info.get("shortName")
+
+        if price is None or price <= 0:
+            hist = stock.history(period="2d", interval="1d")
+            if not hist.empty and "Close" in hist:
+                closes = hist["Close"].dropna().tolist()
+                if closes:
+                    price = float(closes[-1])
+                    if not name:
+                        name = ticker
+
+        return price, name
     except Exception as e:
         print(f"Error fetching price for {ticker}: {e}")
         return None, None
@@ -728,50 +754,6 @@ async def api_portfolio_movement(range: str = '7d', user_id: Optional[str] = Non
         "range": range_key,
     }
 
-@app.get("/api/scheduler-status")
-async def get_scheduler_status():
-    """Get scheduler status and next run time"""
-    try:
-        job = scheduler.get_job("portfolio_price_capture")
-        if job:
-            return {
-                "scheduler_running": scheduler.running,
-                "job_id": job.id,
-                "job_name": job.name,
-                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
-                "market_open": is_market_open()
-            }
-        else:
-            return {"scheduler_running": scheduler.running, "job_id": None}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Portfolio Tracker FastAPI Application')
-    parser.add_argument('--port', type=int, default=5001, help='Port to run the FastAPI application on (default: 5001)')
-    parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the FastAPI application to (default: 0.0.0.0)')
-    parser.add_argument('--reload', action='store_true', help='Enable auto-reload for development')
-    
-    args = parser.parse_args()
-    
-    # Initialize database on startup
-    init_db()
-    
-    # Setup the scheduler for price capture
-    setup_scheduler()
-    
-    print(f"🚀 Starting Portfolio Tracker on http://{args.host}:{args.port}")
-    print(f"📱 Auto-reload: {'enabled' if args.reload else 'disabled'}")
-    print(f"⏰ Price capture scheduler: Active (weekdays 9:05 AM - 5:05 PM EST)")
-    
-    import uvicorn
-    if args.reload:
-        uvicorn.run("main:app", host=args.host, port=args.port, reload=True)
-    else:
-        uvicorn.run(app, host=args.host, port=args.port, reload=False)
-
-
 def _save_insight(user_id: str, symbol: str, summary: str, analysis: dict):
     move_percent = analysis.get("move_percent")
     move_text = None
@@ -848,3 +830,48 @@ async def api_get_insights(user_id: Optional[str] = None):
     resolved_user = user_id or DEFAULT_USER_ID
     insights = get_current_insights(resolved_user)
     return {"user_id": resolved_user, "insights": insights}
+
+
+@app.get("/api/scheduler-status")
+async def get_scheduler_status():
+    """Get scheduler status and next run time"""
+    try:
+        job = scheduler.get_job("portfolio_price_capture")
+        if job:
+            return {
+                "scheduler_running": scheduler.running,
+                "job_id": job.id,
+                "job_name": job.name,
+                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+                "market_open": is_market_open()
+            }
+        else:
+            return {"scheduler_running": scheduler.running, "job_id": None}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Portfolio Tracker FastAPI Application')
+    parser.add_argument('--port', type=int, default=8081, help='Port to run the FastAPI application on (default: 8081)')
+    parser.add_argument('--host', type=str, default='0.0.0.0', help='Host to bind the FastAPI application to (default: 0.0.0.0)')
+    parser.add_argument('--reload', action='store_true', help='Enable auto-reload for development')
+    
+    args = parser.parse_args()
+    
+    # Initialize database on startup
+    init_db()
+    
+    # Setup the scheduler for price capture
+    setup_scheduler()
+    
+    print(f"🚀 Starting Portfolio Tracker on http://{args.host}:{args.port}")
+    print(f"📱 Auto-reload: {'enabled' if args.reload else 'disabled'}")
+    print(f"⏰ Price capture scheduler: Active (weekdays 9:05 AM - 5:05 PM EST)")
+    
+    import uvicorn
+    if args.reload:
+        uvicorn.run("main:app", host=args.host, port=args.port, reload=True)
+    else:
+        uvicorn.run(app, host=args.host, port=args.port, reload=False)

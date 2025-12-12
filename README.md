@@ -14,64 +14,81 @@ Portfolio Tracker is a comprehensive investment portfolio management system that
 
 ## Architecture
 
-The application is organized into separate frontend and backend repositories:
+The application is organized into separate frontend and backend directories:
 
 ```
 finance/
-├── backend/                 # FastAPI backend with versioning
+├── backend/                 # FastAPI backend with AI insights
 │   ├── main.py             # Main FastAPI application
 │   ├── database.py         # Database operations and versioning
-│   ├── requirements.txt    # Python dependencies
-│   ├── start.sh           # Startup script
+│   ├── pyproject.toml      # Python dependencies (UV-managed)
+│   ├── uv.lock            # Reproducible build lockfile
+│   ├── agent_*.py         # AI agents for insights
 │   └── README.md          # Backend documentation
-├── frontend/               # Modern Alpine.js frontend
-│   ├── static/
-│   │   └── script.js      # Main application logic
-│   ├── templates/
-│   │   ├── index.html     # Main portfolio view
-│   │   └── edit.html      # Edit form
-│   ├── package.json       # Frontend metadata
+├── frontend-react/         # Modern React frontend
+│   ├── src/
+│   │   ├── components/    # React components
+│   │   ├── api/          # API client
+│   │   └── utils/        # Utility functions
+│   ├── package.json       # Node.js dependencies
+│   ├── package-lock.json  # Reproducible build lockfile
 │   └── README.md          # Frontend documentation
 ├── README.md              # This file
-└── UV_COMMANDS.md         # Development commands
+└── .gitignore             # Git ignore rules
 ```
 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.8+ (for backend)
-- Node.js 16+ (optional, for frontend development)
-- SQLite (included with Python)
+- Python 3.9+ (for backend)
+- UV (recommended Python package manager) - Install with: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Node.js 16+ (for frontend development)
+- Ollama (optional, for AI insights) - Install from https://ollama.ai
 
-### 1. Start the Backend
+### 1. Backend Setup with UV
 
 ```bash
 cd backend
-chmod +x start.sh
-./start.sh --reload --port 5001
+# Install dependencies and create virtual environment
+uv sync
+
+# Start the backend server
+uv run python main.py
 ```
 
 The backend will be available at:
-- **API**: http://localhost:5001
-- **Documentation**: http://localhost:5001/docs
-- **Portfolio View**: http://localhost:5001
+- **API**: http://localhost:8000
+- **Documentation**: http://localhost:8000/docs
+- **Portfolio View**: http://localhost:8000
 
-### 2. Start the Frontend (Optional)
-
-If you want to run the frontend separately:
+### 2. Frontend Setup (React)
 
 ```bash
-cd frontend
-python -m http.server 3000
+cd frontend-react
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
 ```
 
-Then visit http://localhost:3000
+The frontend will be available at http://localhost:5173
 
-### 3. Add Sample Data
+### 3. AI Insights Setup (Optional)
+
+```bash
+# Pull the AI model for insights
+ollama pull gemma3:4b-it-qat
+
+# Start Ollama server
+ollama serve
+```
+
+### 4. Add Sample Data
 
 ```bash
 cd backend
-python add_sample_data.py
+uv run python add_sample_data.py
 ```
 
 ## Key Features
@@ -137,6 +154,24 @@ python add_sample_data.py
 
 ## Troubleshooting
 
+### Environment Setup Issues
+
+**UV Installation**:
+- Install UV: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Verify installation: `uv --version`
+- Sync dependencies: `uv sync`
+- Run commands: `uv run python main.py`
+
+**Python Version**:
+- Requires Python 3.9+ for AI agents compatibility
+- Check version: `python --version`
+- UV automatically manages virtual environments
+
+**Frontend Issues**:
+- Install Node.js dependencies: `npm install`
+- Start dev server: `npm run dev`
+- Clear cache if needed: `rm -rf node_modules package-lock.json && npm install`
+
 ### Price Fetching Issues
 
 - Some tickers may not be available or may have delays
@@ -149,19 +184,21 @@ python add_sample_data.py
 - The database file (`portfolio.db`) is created automatically
 - If you encounter issues, delete the database file and restart
 - Sample data can be added with `uv run python add_sample_data.py`
+- Database is ignored by git (see `.gitignore`)
 
-### uv Issues
+### AI Insights Issues
 
-- Make sure uv is installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Sync dependencies: `uv sync`
-- Run commands with uv: `uv run python app.py`
-- uv automatically manages virtual environments
+- Ensure Ollama is running: `ollama serve`
+- Pull required model: `ollama pull gemma3:4b-it-qat`
+- Check Ollama status: `ollama list`
+- Insights are optional - app works without AI features
 
 ### Performance
 
 - The application is designed for personal use with hundreds of holdings
 - For very large portfolios, consider adding indexes to the database
 - Price fetching is cached per request to avoid rate limits
+- UV provides 10-100x faster dependency resolution than pip
 
 ## Learning Goals
 
