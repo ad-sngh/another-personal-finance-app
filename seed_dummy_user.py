@@ -120,6 +120,9 @@ def seed_portfolio_snapshots_for_dummy_user():
             round(gain_percent_noise, 3)
         ))
     
+    # Ensure all holdings for the dummy user have insights enabled by default
+    cursor.execute('UPDATE holdings SET track_insights = TRUE WHERE user_id = ?', (dummy_user_id,))
+
     conn.commit()
     conn.close()
     print(f"Created 30 days of realistic portfolio snapshots for user '{dummy_user_id}'.")
@@ -431,14 +434,14 @@ def create_dummy_user_and_holdings():
         cursor.execute('INSERT OR IGNORE INTO holdings ( \
                 holding_id, account_type, account, ticker, name, category, lookup, \
                 shares, cost, current_price, contribution, last_updated, \
-                is_deleted, track_price, manual_price_override, value_override, \
+                is_deleted, track_price, track_insights, manual_price_override, value_override, \
                 convert_to_cad, cad_conversion_rate, user_id \
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', (
             h['holding_id'], h['account_type'], h['account'], h['ticker'], h['name'],
             h['category'], h['lookup'], round(shares_variation, 3), round(cost_variation, 2),
             round(current_price_variation, 3), round(contribution_variation, 2),
             datetime.now(timezone.utc).isoformat(),
-            False, True, False, None,
+            False, True, True, False, None,
             h['convert_to_cad'], h['cad_conversion_rate'], dummy_user_id
         ))
         

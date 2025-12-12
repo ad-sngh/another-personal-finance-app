@@ -140,12 +140,12 @@ if [ -n "$RELOAD" ]; then
 fi
 
 # Initialize database if it doesn't exist
-if [ ! -f "portfolio.db" ]; then
+if [ ! -f "${PORTFOLIO_DB_PATH:-/Users/adityabhushansingh/Documents/Personal/learn/portfolio.db}" ]; then
     echo "Initializing database..."
     if [ -n "$UV_CMD" ]; then
-        $UV_CMD $PYTHON_CMD -c "from database import init_db; init_db()"
+        $UV_CMD $PYTHON_CMD -c "from dotenv import load_dotenv; load_dotenv(); from database import init_db; init_db()"
     else
-        $PYTHON_CMD -c "from database import init_db; init_db()"
+        $PYTHON_CMD -c "from dotenv import load_dotenv; load_dotenv(); from database import init_db; init_db()"
     fi
 fi
 

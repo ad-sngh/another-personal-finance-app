@@ -7,6 +7,10 @@ import sqlite3
 import yfinance as yf
 import argparse
 from typing import Optional, List, Literal, Dict
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from database import (
     get_db,
     init_db,
@@ -48,7 +52,7 @@ MARKET_INDEXES: List[Dict[str, str]] = [
     {"id": "nasdaq", "symbol": "^IXIC", "name": "Nasdaq"},
 ]
 
-DEFAULT_USER_ID = 'default'
+DEFAULT_USER_ID = 'user_alex'
 
 app = FastAPI(title="Portfolio Tracker", description="A simple web application to track investment holdings")
 
