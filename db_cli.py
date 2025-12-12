@@ -12,18 +12,21 @@ from datetime import datetime, timedelta
 from tabulate import tabulate
 import pandas as pd
 import yfinance as yf
+from dotenv import load_dotenv
 
 # Add backend to path and import database module explicitly
 CURRENT_DIR = os.path.dirname(__file__)
 BACKEND_DIR = os.path.join(CURRENT_DIR, 'backend')
 sys.path.append(BACKEND_DIR)
-from backend.database import add_price_history, get_price_history, get_active_holdings
+
+load_dotenv(os.path.join(CURRENT_DIR, ".env"))
+
+from backend.database import add_price_history, get_price_history, get_active_holdings, DATABASE
 
 def get_connection():
     """Get database connection"""
-    db_path = os.path.join(os.path.dirname(__file__), 'backend', 'portfolio.db')
-    print(f"Using database: {db_path}")
-    return sqlite3.connect(db_path)
+    print(f"Using database: {DATABASE}")
+    return sqlite3.connect(DATABASE)
 
 def show_price_history(args):
     """Show price history for a ticker"""
